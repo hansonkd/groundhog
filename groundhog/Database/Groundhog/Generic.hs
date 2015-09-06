@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, ExistentialQuantification, ScopedTypeVariables, MultiParamTypeClasses, FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts, ExistentialQuantification, ScopedTypeVariables, OverloadedStrings, MultiParamTypeClasses, FlexibleInstances #-}
 
 -- | This helper module is intended for use by the backend creators
 module Database.Groundhog.Generic
@@ -69,7 +69,13 @@ import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.Reader.Class (MonadReader(..))
 import Data.Either (partitionEithers)
 import Data.Function (on)
+import Data.Monoid ((<>))
+
 import Data.List (partition, sortBy)
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
+
 import qualified Data.Map as Map
 import System.IO (hPutStrLn, stderr)
 
@@ -79,7 +85,7 @@ createMigration m = liftM snd $ runStateT m Map.empty
 
 -- | Returns either a list of errors in migration or a list of queries
 getQueries :: Bool -- ^ True - support unsafe queries
-             -> SingleMigration -> Either [String] [String]
+             -> SingleMigration -> Either [Text] [Text]
 getQueries _ (Left errs) = Left errs
 getQueries runUnsafe (Right migs) = (if runUnsafe || null unsafe
   then Right $ map (\(_, _, query) -> query) migs'
@@ -94,9 +100,9 @@ executeMigration' :: (PersistBackend m, MonadIO m) => Bool -> Bool -> NamedMigra
 executeMigration' runUnsafe silent m = do
   let migs = getQueries runUnsafe $ mergeMigrations $ Map.elems m
   case migs of
-    Left errs -> fail $ unlines errs
+    Left errs -> fail $ T.unpack $ T.unlines errs
     Right qs -> forM_  qs $ \q -> do
-      unless silent $ liftIO $ hPutStrLn stderr $ "Migrating: " ++ q
+      unless silent $ liftIO $ T.hPutStrLn stderr $ "Migrating: " <> q
       executeRaw False q []
 
 -- | Execute the migrations with printing to stderr. Fails when an unsafe migration occurs.
@@ -114,12 +120,12 @@ executeMigrationUnsafe = executeMigration' True False
 -- | Pretty print the migrations
 printMigration :: MonadIO m => NamedMigrations -> m ()
 printMigration migs = liftIO $ forM_ (Map.assocs migs) $ \(k, v) -> do
-  putStrLn $ "Datatype " ++ k ++ ":"
+  T.putStrLn $ "Datatype " <> k <> ":"
   case v of
-    Left errors -> mapM_ (putStrLn . ("\tError:\t" ++)) errors
+    Left errors -> mapM_ (T.putStrLn . ("\tError:\t" <>)) errors
     Right sqls  -> do
-      let showSql (isUnsafe, _, sql) = (if isUnsafe then "Unsafe:\t" else "Safe:\t") ++ sql
-      mapM_ (putStrLn . ("\t" ++) . showSql) sqls
+      let showSql (isUnsafe, _, sql) = (if isUnsafe then "Unsafe:\t" else "Safe:\t") <> sql
+      mapM_ (T.putStrLn . ("\t" <>) . showSql) sqls
 
 -- | Creates migrations and executes them with printing to stderr. Fails when an unsafe migration occurs.
 -- > runMigration m = createMigration m >>= executeMigration
@@ -142,11 +148,11 @@ mergeMigrations ms = case partitionEithers ms of
   ([], statements) -> Right $ concat statements
   (errors, _)      -> Left  $ concat errors
 
-failMessage :: PersistField a => a -> [PersistValue] -> String
-failMessage a = failMessageNamed (persistName a)
+failMessage :: PersistField a => a -> [PersistValue] -> Text
+failMessage a =  failMessageNamed (persistName a)
 
-failMessageNamed :: String -> [PersistValue] -> String
-failMessageNamed name xs = "Invalid list for " ++ name ++ ": " ++ show xs
+failMessageNamed :: Text -> [PersistValue] -> Text
+failMessageNamed name xs = "Invalid list for " <> name <> ": " <> (T.pack $ show xs)
 
 finally :: MonadBaseControl IO m
         => m a -- ^ computation to run first
@@ -180,7 +186,7 @@ data PSFieldDef str = PSFieldDef {
   , psReferenceParent :: Maybe (Maybe ((Maybe str, str), [str]), Maybe ReferenceActionType, Maybe ReferenceActionType)
 } deriving (Eq, Show)
 
-applyDbTypeSettings :: PSFieldDef String -> DbType -> DbType
+applyDbTypeSettings :: PSFieldDef Text -> DbType -> DbType
 applyDbTypeSettings (PSFieldDef _ _ dbTypeName _ Nothing def psRef) typ = case typ of
   DbTypePrimitive t nullable def' ref -> DbTypePrimitive (maybe t (\typeName -> DbOther $ OtherTypeDef [Left typeName]) dbTypeName) nullable (def <|> def') (applyReferencesSettings psRef ref)
   DbEmbedded emb ref -> DbEmbedded emb (applyReferencesSettings psRef ref)
@@ -198,7 +204,7 @@ applyDbTypeSettings (PSFieldDef _ _ _ _ (Just subs) _ psRef) typ = (case typ of
         Just name' -> (True, (name', applyDbTypeSettings fDef fType):fields')
     _ -> let (flag, fields') = go st fs in (flag, field:fields')
 
-applyReferencesSettings :: Maybe (Maybe ((Maybe String, String), [String]), Maybe ReferenceActionType, Maybe ReferenceActionType) -> Maybe ParentTableReference -> Maybe ParentTableReference
+applyReferencesSettings :: Maybe (Maybe ((Maybe Text, Text), [Text]), Maybe ReferenceActionType, Maybe ReferenceActionType) -> Maybe ParentTableReference -> Maybe ParentTableReference
 applyReferencesSettings Nothing ref = ref
 applyReferencesSettings (Just (parent, onDel, onUpd)) (Just (parent', onDel', onUpd')) = Just (maybe parent' Right parent, onDel <|> onDel', onUpd <|> onUpd')
 applyReferencesSettings (Just (Just parent, onDel, onUpd)) Nothing = Just (Right parent, onDel, onUpd)
@@ -209,14 +215,14 @@ primToPersistValue a = phantomDb >>= \p -> return (toPrimitivePersistValue p a:)
 
 primFromPersistValue :: (PersistBackend m, PrimitivePersistField a) => [PersistValue] -> m (a, [PersistValue])
 primFromPersistValue (x:xs) = phantomDb >>= \p -> return (fromPrimitivePersistValue p x, xs)
-primFromPersistValue xs = (\a -> fail (failMessage a xs) >> return (a, xs)) undefined
+primFromPersistValue xs = (\a -> fail (T.unpack $ failMessage a xs) >> return (a, xs)) undefined
 
 primToPurePersistValues :: (DbDescriptor db, PrimitivePersistField a) => proxy db -> a -> ([PersistValue] -> [PersistValue])
 primToPurePersistValues p a = (toPrimitivePersistValue p a:)
 
 primFromPurePersistValues :: (DbDescriptor db, PrimitivePersistField a) => proxy db -> [PersistValue] -> (a, [PersistValue])
 primFromPurePersistValues p (x:xs) = (fromPrimitivePersistValue p x, xs)
-primFromPurePersistValues _ xs = (\a -> error (failMessage a xs) `asTypeOf` (a, xs)) undefined
+primFromPurePersistValues _ xs = (\a -> error (T.unpack $ failMessage a xs) `asTypeOf` (a, xs)) undefined
 
 primToSinglePersistValue :: (PersistBackend m, PrimitivePersistField a) => a -> m PersistValue
 primToSinglePersistValue a = phantomDb >>= \p -> return (toPrimitivePersistValue p a)
@@ -235,7 +241,7 @@ singleToPersistValue a = toSinglePersistValue a >>= \x -> return (x:)
 
 singleFromPersistValue :: (PersistBackend m, SinglePersistField a) => [PersistValue] -> m (a, [PersistValue])
 singleFromPersistValue (x:xs) = fromSinglePersistValue x >>= \a -> return (a, xs)
-singleFromPersistValue xs = (\a -> fail (failMessage a xs) >> return (a, xs)) undefined
+singleFromPersistValue xs = (\a -> fail (T.unpack $ failMessage a xs) >> return (a, xs)) undefined
 
 toSinglePersistValueUnique :: forall m v u . (PersistBackend m, PersistEntity v, IsUniqueKey (Key v (Unique u)), PrimitivePersistField (Key v (Unique u)))
                            => u (UniqueMarker v) -> v -> m PersistValue
@@ -330,7 +336,7 @@ runDbConnNoTransaction :: (MonadBaseControl IO m, MonadIO m, ConnectionManager c
 runDbConnNoTransaction f cm = runNoLoggingT (withConnNoTransaction (runDbPersist f) cm)
 
 -- | It helps to run 'withConnSavepoint' within a monad.
-withSavepoint :: (HasConn m cm conn, SingleConnectionManager cm conn, Savepoint conn) => String -> m a -> m a
+withSavepoint :: (HasConn m cm conn, SingleConnectionManager cm conn, Savepoint conn) => Text -> m a -> m a
 withSavepoint name m = ask >>= withConnNoTransaction (withConnSavepoint name m)
 
 {-# DEPRECATED deleteByKey "Use deleteBy instead" #-}

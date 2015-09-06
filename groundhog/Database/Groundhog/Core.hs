@@ -26,6 +26,7 @@ module Database.Groundhog.Core
   , Utf8(..)
   , fromUtf8
   , delim
+  , delimChar
   -- * Constructing expressions
   , Cond(..)
   , ExprRelation(..)
@@ -103,6 +104,7 @@ import Data.Int (Int64)
 import Data.Map (Map)
 import Data.Time (Day, TimeOfDay, UTCTime)
 import Data.Time.LocalTime (ZonedTime, zonedTimeToUTC, zonedTimeToLocalTime, zonedTimeZone)
+import Data.Text (Text, singleton)
 import GHC.Exts (Constraint)
 
 -- | Only instances of this class can be persisted in a database
@@ -126,7 +128,7 @@ class (PurePersistField (AutoKey v), PurePersistField (DefaultKey v)) => Persist
   -- | Constructs the value from the list of 'PersistValue'
   fromEntityPersistValues :: PersistBackend m => [PersistValue] -> m (v, [PersistValue])
   -- | Returns constructor number and a list of uniques names and corresponding field values
-  getUniques :: DbDescriptor db => proxy db -> v -> (Int, [(String, [PersistValue] -> [PersistValue])])
+  getUniques :: DbDescriptor db => proxy db -> v -> (Int, [(Text, [PersistValue] -> [PersistValue])])
   -- | Is internally used by FieldLike Field instance
   -- We could avoid this function if class FieldLike allowed FieldLike Fields Data or FieldLike (Fields Data). However that would require additional extensions in user-space code
   entityFieldChain :: DbDescriptor db => proxy db -> Field v c a -> FieldChain
@@ -164,7 +166,7 @@ data Order db r = forall a f . (Projection' f db r a) => Asc  f
                 | forall a f . (Projection' f db r a) => Desc f
 
 -- | It is used to map field to column names. It can be either a column name for a regular field of non-embedded type or a list of this field and the outer fields in reverse order. Eg, fieldChain $ SomeField ~> Tuple2_0Selector may result in [(\"val0\", DbString), (\"some\", DbEmbedded False [dbType \"\", dbType True])].
-type FieldChain = ((String, DbType), [(String, EmbeddedDef)])
+type FieldChain = ((Text, DbType), [(Text, EmbeddedDef)])
 
 -- | Any data that can be fetched from a database
 class Projection p a | p -> a where
@@ -217,7 +219,7 @@ data SelectOptions db r hasLimit hasOffset hasOrder hasDistinct = SelectOptions 
     -- ^ False - no DISTINCT, True - DISTINCT
   , distinctOptions :: Bool
     -- ^ The name of the option and part of the SQL which will be put later
-  , dbSpecificOptions  :: [(String, QueryRaw db r)]
+  , dbSpecificOptions  :: [(Text, QueryRaw db r)]
   }
 
 -- | This class helps to check that limit, offset, or order clauses are added to condition only once.
@@ -319,7 +321,7 @@ class PrimitivePersistField (AutoKeyType db) => DbDescriptor db where
   -- | Value of this type can be used as a part of a query. For example, it can be RenderS for relational databases, or BSON for MongoDB.
   type QueryRaw db :: * -> *
   -- | Name of backend
-  backendName :: proxy db -> String
+  backendName :: proxy db -> Text
 
 class (Monad m, DbDescriptor (PhantomDb m)) => PersistBackend m where
   -- | A token which defines the DB type. For example, different monads working with Sqlite, return may Sqlite type.
@@ -381,12 +383,12 @@ class (Monad m, DbDescriptor (PhantomDb m)) => PersistBackend m where
   migrate       :: PersistEntity v => v -> Migration m
   -- | Execute raw query
   executeRaw    :: Bool           -- ^ keep in cache
-                -> String         -- ^ query
+                -> Text         -- ^ query
                 -> [PersistValue] -- ^ positional parameters
                 -> m ()
   -- | Execute raw query with results
   queryRaw      :: Bool           -- ^ keep in cache
-                -> String         -- ^ query
+                -> Text         -- ^ query
                 -> [PersistValue] -- ^ positional parameters
                 -> (RowPopper m -> m a) -- ^ results processing function
                 -> m a
@@ -398,13 +400,13 @@ type RowPopper m = m (Maybe [PersistValue])
 type Migration m = StateT NamedMigrations m ()
 
 -- | Datatype names and corresponding migrations
-type NamedMigrations = Map String SingleMigration
+type NamedMigrations = Map Text SingleMigration
 
 -- | Either error messages or migration queries with safety flag and execution order
-type SingleMigration = Either [String] [(Bool, Int, String)]
+type SingleMigration = Either [Text] [(Bool, Int, Text)]
 
 -- $types
--- These types describe the mapping between database schema and datatype. They hold table names, columns, constraints, etc. Some types below are parameterized by string type str and dbType. This is done to make them promotable to kind level.
+-- These types describe the mapping between database schema and datatype. They hold table names, columns, constraints, etc. Some types below are parameterized by Text type str and dbType. This is done to make them promotable to kind level.
 
 -- | Describes an ADT.
 data EntityDef' str dbType = EntityDef {
@@ -418,7 +420,7 @@ data EntityDef' str dbType = EntityDef {
   , constructors :: [ConstructorDef' str dbType]
 } deriving (Show, Eq)
 
-type EntityDef = EntityDef' String DbType
+type EntityDef = EntityDef' Text DbType
 
 -- | Describes an entity constructor
 data ConstructorDef' str dbType = ConstructorDef {
@@ -432,7 +434,7 @@ data ConstructorDef' str dbType = ConstructorDef {
   , constrUniques :: [UniqueDef' str (Either (str, dbType) str)]
 } deriving (Show, Eq)
 
-type ConstructorDef = ConstructorDef' String DbType
+type ConstructorDef = ConstructorDef' Text DbType
 
 -- | Phantom constructors are made instances of this class. This class should be used only by Template Haskell codegen
 class Constructor c where
@@ -462,7 +464,7 @@ data UniqueDef' str field = UniqueDef {
 } deriving (Show, Eq)
 
 -- | Field is either a pair of entity field name and its type or an expression which will be used in query as-is.
-type UniqueDef = UniqueDef' String (Either (String, DbType) String)
+type UniqueDef = UniqueDef' Text (Either (Text, DbType) Text)
 
 -- | Defines how to treat the unique set of fields for a datatype
 data UniqueType = UniqueConstraint
@@ -478,10 +480,11 @@ data ReferenceActionType = NoAction
   deriving (Eq, Show)
 
 -- | A DB data type. Naming attempts to reflect the underlying Haskell
--- datatypes, eg DbString instead of DbVarchar. Different databases may
+-- datatypes, eg DbText instead of DbVarchar. Different databases may
 -- have different representations for these types.
 data DbTypePrimitive' str =
       DbString
+    | DbText
     | DbInt32
     | DbInt64
     | DbReal
@@ -494,31 +497,31 @@ data DbTypePrimitive' str =
     | DbOther (OtherTypeDef' str)
   deriving (Eq, Show)
 
-type DbTypePrimitive = DbTypePrimitive' String
+type DbTypePrimitive = DbTypePrimitive' Text
 
 data DbType = 
     -- | type, nullable, default value, reference
-      DbTypePrimitive DbTypePrimitive Bool (Maybe String) (Maybe ParentTableReference)
+      DbTypePrimitive DbTypePrimitive Bool (Maybe Text) (Maybe ParentTableReference)
     | DbEmbedded EmbeddedDef (Maybe ParentTableReference)
-    | DbList String DbType -- ^ List table name and type of its argument
+    | DbList Text DbType -- ^ List table name and type of its argument
   deriving (Eq, Show)
 
 -- | The reference contains either EntityDef of the parent table and name of the unique constraint. Or for tables not mapped by Groundhog schema name, table name, and list of columns  
 -- Reference to the autogenerated key of a mapped entity = (Left (entityDef, Nothing), onDelete, onUpdate)
 -- Reference to a unique key of a mapped entity = (Left (entityDef, Just uniqueKeyName), onDelete, onUpdate)
 -- Reference to a table that is not mapped = (Right ((schema, tableName), columns), onDelete, onUpdate)
-type ParentTableReference = (Either (EntityDef, Maybe String) ((Maybe String, String), [String]), Maybe ReferenceActionType, Maybe ReferenceActionType)
+type ParentTableReference = (Either (EntityDef, Maybe Text) ((Maybe Text, Text), [Text]), Maybe ReferenceActionType, Maybe ReferenceActionType)
 
--- | Stores a database type. The list contains two kinds of tokens for the type string. Backend will choose a string representation for DbTypePrimitive's, and the string literals will go to the type as-is. As the final step, these tokens are concatenated. For example, @[Left \"varchar(50)\"]@ will become a string with max length and @[Right DbInt64, Left \"[]\"]@ will become integer[] in PostgreSQL.
+-- | Stores a database type. The list contains two kinds of tokens for the type Text. Backend will choose a Text representation for DbTypePrimitive's, and the Text literals will go to the type as-is. As the final step, these tokens are concatenated. For example, @[Left \"varchar(50)\"]@ will become a Text with max length and @[Right DbInt64, Left \"[]\"]@ will become integer[] in PostgreSQL.
 newtype OtherTypeDef' str = OtherTypeDef ([Either str (DbTypePrimitive' str)]) deriving (Eq, Show)
 
-type OtherTypeDef = OtherTypeDef' String
+type OtherTypeDef = OtherTypeDef' Text
 
 -- | The first argument is a flag which defines if the field names should be concatenated with the outer field name (False) or used as is which provides full control over table column names (True).
 -- Value False should be the default value so that a datatype can be embedded without name conflict concern. The second argument list of field names and field types.
 data EmbeddedDef' str dbType = EmbeddedDef Bool [(str, dbType)] deriving (Eq, Show)
 
-type EmbeddedDef = EmbeddedDef' String DbType
+type EmbeddedDef = EmbeddedDef' Text DbType
 
 -- | Datatype for incremental building SQL queries
 newtype Utf8 = Utf8 Builder
@@ -535,6 +538,7 @@ fromUtf8 (Utf8 a) = toByteString a
 -- | A raw value which can be stored in any backend and can be marshalled to
 -- and from a 'PersistField'.
 data PersistValue = PersistString String
+                  | PersistText Text
                   | PersistByteString ByteString
                   | PersistInt64 Int64
                   | PersistDouble Double
@@ -578,7 +582,7 @@ instance Eq (Expr db r a) where (==) = error "(==): this instance Eq (Expr db r 
 -- | Represents everything which can be put into a database. This data can be stored in multiple columns and tables. To get value of those columns we might need to access another table. That is why the result type is monadic.
 class PersistField a where
   -- | Return name of the type. If it is polymorphic, the names of parameter types are separated with 'Database.Groundhog.Generic.delim' symbol
-  persistName :: a -> String
+  persistName :: a -> Text
   -- | Convert a value into something which can be stored in a database column.
   -- Note that for complex datatypes it may insert them to return identifier
   toPersistValues :: PersistBackend m => a -> m ([PersistValue] -> [PersistValue])
@@ -602,8 +606,11 @@ class PersistField a => PrimitivePersistField a where
   toPrimitivePersistValue :: DbDescriptor db => proxy db -> a -> PersistValue
   fromPrimitivePersistValue :: DbDescriptor db => proxy db -> PersistValue -> a
 
-delim :: Char
-delim = '#'
+delimChar :: Char
+delimChar = '#'
+
+delim :: Text
+delim = singleton delimChar
 
 -- | Connection manager provides connection to the passed function handles transations. Manager can be a connection itself, a pool, Snaplet in Snap, foundation datatype in Yesod, etc.
 class ConnectionManager cm conn | cm -> conn where
@@ -617,4 +624,4 @@ class ConnectionManager cm conn => SingleConnectionManager cm conn
 
 class Savepoint conn where
   -- | Wraps the passed action into a named savepoint
-  withConnSavepoint :: (MonadBaseControl IO m, MonadIO m) => String -> m a -> conn -> m a
+  withConnSavepoint :: (MonadBaseControl IO m, MonadIO m) => Text -> m a -> conn -> m a

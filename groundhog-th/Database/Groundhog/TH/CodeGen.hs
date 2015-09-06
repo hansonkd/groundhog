@@ -30,12 +30,15 @@ import Database.Groundhog.TH.Settings
 import Language.Haskell.TH
 import Language.Haskell.TH.Syntax (Lift(..))
 import Control.Applicative
+import Data.Monoid ((<>))
+
 import Control.Arrow (second)
 import Control.Monad (liftM, liftM2, forM, forM_, foldM, filterM, replicateM)
 import Data.Either (lefts, rights)
 import Data.List (findIndex, nub, partition)
 import Data.Maybe (catMaybes, mapMaybe)
 import qualified Text.Read as R
+import qualified Data.Text as T
 
 mkEmbeddedPersistFieldInstance :: THEmbeddedDef -> Q [Dec]
 mkEmbeddedPersistFieldInstance def = do
@@ -45,10 +48,10 @@ mkEmbeddedPersistFieldInstance def = do
   persistName' <- do
     v <- newName "v"
     let mkLambda t = [|undefined :: $(forallT (thEmbeddedTypeParams def) (cxt []) [t| $(return embedded) -> $(return t) |]) |]
-    let paramNames = foldr1 (\p xs -> [| $p ++ [delim] ++ $xs |] ) $ map (\t -> [| persistName ($(mkLambda t) $(varE v)) |]) types
+    let paramNames = foldr1 (\p xs -> [| $p <> delim <> $xs |] ) $ map (\t -> [| persistName ($(mkLambda t) $(varE v)) |]) types
     let fullEmbeddedName = case null types of
          True  -> [| $(stringE $ thDbEmbeddedName def) |]
-         False -> [| $(stringE $ thDbEmbeddedName def) ++ [delim] ++ $(paramNames) |]
+         False -> [| $(stringE $ thDbEmbeddedName def) <> delim <> $(paramNames) |]
     let body = normalB $ fullEmbeddedName
     let pat = if null types then wildP else varP v
     funD 'persistName $ [ clause [pat] body [] ]
@@ -196,7 +199,7 @@ mkAutoKeyPersistFieldInstance def = case thAutoKey def of
     
     persistName' <- do
       a <- newName "a"
-      let body = [| "Key" ++ [delim] ++ persistName ((undefined :: Key v u -> v) $(varE a)) |]
+      let body = [| "Key" <> delim <> persistName ((undefined :: Key v u -> v) $(varE a)) |]
       funD 'persistName [clause [varP a] (normalB body) []]
     toPersistValues' <- funD 'toPersistValues [clause [] (normalB [| primToPersistValue |]) []]
     fromPersistValues' <- funD 'fromPersistValues [clause [] (normalB [| primFromPersistValue |]) []]
@@ -494,10 +497,10 @@ mkPersistEntityInstance def = do
           getField (Left fName) = [| Left $(snd $ findOne "field" fst fName fields) |]
           getField (Right expr) = [| Right expr |]
     
-        paramNames = foldr1 (\p xs -> [| $p ++ [delim] ++ $xs |] ) $ map (\t -> [| persistName ($(mkLambda t) $(varE v)) |]) types
+        paramNames = foldr1 (\p xs -> [| $p <> delim <> $xs |] ) $ map (\t -> [| persistName ($(mkLambda t) $(varE v)) |]) types
         fullEntityName = case null types of
          True  -> [| $(stringE $ thDbEntityName def) |]
-         False -> [| $(stringE $ thDbEntityName def) ++ [delim] ++ $(paramNames) |]
+         False -> [| $(stringE $ thDbEntityName def) <> delim <> $(paramNames) |]
 
         body = normalB [| EntityDef $fullEntityName $(lift $ thEntitySchema def) $typeParams' $constrs |]
         entityPat = if null $ thTypeParams def then wildP else varP v
@@ -524,7 +527,7 @@ mkPersistEntityInstance def = do
 
   fromEntityPersistValues' <- do
       xs <- newName "xs"
-      let failureBody = normalB [| (\a -> phantomDb >>= \proxy -> fail (failMessageNamed (entityName $ entityDef proxy a) $(varE xs)) >> return (a, [])) undefined |]
+      let failureBody = normalB [| (\a -> phantomDb >>= \proxy -> (fail $ (T.unpack (failMessageNamed (entityName $ entityDef proxy a) $(varE xs)))) >> return (a, [])) undefined |]
       failureName <- newName "failure"
       let failure = match wildP (normalB $ varE failureName) []
       matches <- forM (zip [0..] (thConstructors def)) $ \(cNum, c) -> do
@@ -599,10 +602,10 @@ mkEntityPersistFieldInstance def = case getDefaultKey def of
       v <- newName "v"
       let mkLambda t = [|undefined :: $(forallT (thTypeParams def) (cxt []) [t| $(return entity) -> $(return t) |]) |]
     
-      let paramNames = foldr1 (\p xs -> [| $p ++ [delim] ++ $xs |] ) $ map (\t -> [| persistName ($(mkLambda t) $(varE v)) |]) types
+      let paramNames = foldr1 (\p xs -> [| $p <> delim <> $xs |] ) $ map (\t -> [| persistName ($(mkLambda t) $(varE v)) |]) types
       let fullEntityName = case null types of
            True  -> [| $(stringE $ thDbEntityName def) |]
-           False -> [| $(stringE $ thDbEntityName def) ++ [delim] ++ $(paramNames) |]
+           False -> [| $(stringE $ thDbEntityName def) <> delim <> $(paramNames) |]
       let body = normalB $ fullEntityName
       let pat = if null types then wildP else varP v
       funD 'persistName $ [ clause [pat] body [] ]

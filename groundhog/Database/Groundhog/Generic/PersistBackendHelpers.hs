@@ -195,7 +195,7 @@ replace RenderConfig{..} queryFunc execFunc insertIntoConstructorTable k v = do
       RenderS upds updsVals = commasJoin $ zipWith f fields $ tail vals where
         fields = foldr (flatten esc) [] $ constrParams constr
         f f1 f2 = RenderS f1 id <> fromChar '=' <> renderPersistValue f2
-      updateQuery = "UPDATE " <> tableName esc e constr <> " SET " <> upds <> " WHERE " <> fromString (fromJust $ constrAutoKeyName constr) <> "=?"
+      updateQuery = "UPDATE " <> tableName esc e constr <> " SET " <> upds <> " WHERE " <> textToUtf8 (fromJust $ constrAutoKeyName constr) <> "=?"
 
   if isSimple (constructors e)
     then execFunc updateQuery (updsVals [k'])
@@ -352,7 +352,7 @@ insertBy conf@RenderConfig{..} queryFunc manyNulls u v = do
         Just xs  -> fail $ "unexpected query result: " ++ show xs
 
 constrId :: (Utf8 -> Utf8) -> ConstructorDef -> Maybe Utf8
-constrId escape = fmap (escape . fromString) . constrAutoKeyName
+constrId escape = fmap (escape . textToUtf8) . constrAutoKeyName
 
 toEntityPersistValues' :: (PersistBackend m, PersistEntity v) => v -> m [PersistValue]
 toEntityPersistValues' = liftM ($ []) . toEntityPersistValues

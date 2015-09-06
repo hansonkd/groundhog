@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeFamilies, GADTs, TypeSynonymInstances, OverlappingInstances, MultiParamTypeClasses, FlexibleInstances, UndecidableInstances, CPP, ConstraintKinds #-}
+{-# LANGUAGE TypeFamilies, GADTs, TypeSynonymInstances, OverloadedStrings, OverlappingInstances, MultiParamTypeClasses, FlexibleInstances, UndecidableInstances, CPP, ConstraintKinds #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Database.Groundhog.Instances (Selector(..)) where
 
@@ -7,6 +7,7 @@ import Database.Groundhog.Generic (primToPersistValue, primFromPersistValue, pri
 
 import qualified Data.Aeson as A
 import qualified Data.Text as T
+import qualified Data.Text.Read as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Encoding.Error as T
 #if MIN_VERSION_base(4, 7, 0)
@@ -18,6 +19,8 @@ import Data.ByteString.Char8 (ByteString, unpack)
 import qualified Data.ByteString.Lazy.Char8 as Lazy
 import qualified Data.ByteString.Base64 as B64
 import Data.Int (Int8, Int16, Int32, Int64)
+import Data.Monoid
+
 import Data.Time (Day, TimeOfDay, UTCTime)
 import Data.Time.LocalTime (ZonedTime, zonedTimeToUTC, utc, utcToZonedTime)
 import Data.Word (Word8, Word16, Word32, Word64)
@@ -108,6 +111,7 @@ instance (PurePersistField a, PurePersistField b, PurePersistField c, PurePersis
 instance PrimitivePersistField String where
   toPrimitivePersistValue _ s = PersistString s
   fromPrimitivePersistValue _ (PersistString s) = s
+  fromPrimitivePersistValue _ (PersistText s) = T.unpack s
   fromPrimitivePersistValue _ (PersistByteString bs) = T.unpack $ T.decodeUtf8With T.lenientDecode bs
   fromPrimitivePersistValue _ (PersistInt64 i) = show i
   fromPrimitivePersistValue _ (PersistDouble d) = show d
@@ -120,12 +124,16 @@ instance PrimitivePersistField String where
   fromPrimitivePersistValue _ (PersistCustom _ _) = error "Unexpected PersistCustom"
 
 instance PrimitivePersistField T.Text where
-  toPrimitivePersistValue _ a = PersistString (T.unpack a)
+  toPrimitivePersistValue _ a = PersistText a
+  fromPrimitivePersistValue _ (PersistString a) = T.pack a
+  fromPrimitivePersistValue _ (PersistText a) = a
   fromPrimitivePersistValue _ (PersistByteString bs) = T.decodeUtf8With T.lenientDecode bs
   fromPrimitivePersistValue p x = T.pack $ fromPrimitivePersistValue p x
 
 instance PrimitivePersistField ByteString where
   toPrimitivePersistValue _ s = PersistByteString s
+  fromPrimitivePersistValue _ (PersistString a) = T.encodeUtf8 $ T.pack a
+  fromPrimitivePersistValue _ (PersistText a) = T.encodeUtf8 a
   fromPrimitivePersistValue _ (PersistByteString a) = a
   fromPrimitivePersistValue p x = T.encodeUtf8 . T.pack $ fromPrimitivePersistValue p x
 
@@ -138,61 +146,61 @@ instance PrimitivePersistField Int where
   toPrimitivePersistValue _ a = PersistInt64 (fromIntegral a)
   fromPrimitivePersistValue _ (PersistInt64 a) = fromIntegral a
   fromPrimitivePersistValue _ (PersistDouble a) = truncate a
-  fromPrimitivePersistValue _ x = readHelper x ("Expected Integer, received: " ++ show x)
+  fromPrimitivePersistValue _ x = readIntegral (T.signed T.decimal) x ("Expected Integer, received: " ++ show x)
 
 instance PrimitivePersistField Int8 where
   toPrimitivePersistValue _ a = PersistInt64 (fromIntegral a)
   fromPrimitivePersistValue _ (PersistInt64 a) = fromIntegral a
   fromPrimitivePersistValue _ (PersistDouble a) = truncate a
-  fromPrimitivePersistValue _ x = readHelper x ("Expected Integer, received: " ++ show x)
+  fromPrimitivePersistValue _ x = readIntegral (T.signed T.decimal) x ("Expected Integer, received: " ++ show x)
 
 instance PrimitivePersistField Int16 where
   toPrimitivePersistValue _ a = PersistInt64 (fromIntegral a)
   fromPrimitivePersistValue _ (PersistInt64 a) = fromIntegral a
   fromPrimitivePersistValue _ (PersistDouble a) = truncate a
-  fromPrimitivePersistValue _ x = readHelper x ("Expected Integer, received: " ++ show x)
+  fromPrimitivePersistValue _ x = readIntegral (T.signed T.decimal) x ("Expected Integer, received: " ++ show x)
 
 instance PrimitivePersistField Int32 where
   toPrimitivePersistValue _ a = PersistInt64 (fromIntegral a)
   fromPrimitivePersistValue _ (PersistInt64 a) = fromIntegral a
   fromPrimitivePersistValue _ (PersistDouble a) = truncate a
-  fromPrimitivePersistValue _ x = readHelper x ("Expected Integer, received: " ++ show x)
+  fromPrimitivePersistValue _ x = readIntegral (T.signed T.decimal) x ("Expected Integer, received: " ++ show x)
 
 instance PrimitivePersistField Int64 where
   toPrimitivePersistValue _ a = PersistInt64 (fromIntegral a)
   fromPrimitivePersistValue _ (PersistInt64 a) = a
   fromPrimitivePersistValue _ (PersistDouble a) = truncate a
-  fromPrimitivePersistValue _ x = readHelper x ("Expected Integer, received: " ++ show x)
+  fromPrimitivePersistValue _ x = readIntegral (T.signed T.decimal) x ("Expected Integer, received: " ++ show x)
 
 instance PrimitivePersistField Word8 where
   toPrimitivePersistValue _ a = PersistInt64 (fromIntegral a)
   fromPrimitivePersistValue _ (PersistInt64 a) = fromIntegral a
   fromPrimitivePersistValue _ (PersistDouble a) = truncate a
-  fromPrimitivePersistValue _ x = readHelper x ("Expected Integer, received: " ++ show x)
+  fromPrimitivePersistValue _ x = readIntegral (T.signed T.decimal) x ("Expected Integer, received: " ++ show x)
 
 instance PrimitivePersistField Word16 where
   toPrimitivePersistValue _ a = PersistInt64 (fromIntegral a)
   fromPrimitivePersistValue _ (PersistInt64 a) = fromIntegral a
   fromPrimitivePersistValue _ (PersistDouble a) = truncate a
-  fromPrimitivePersistValue _ x = readHelper x ("Expected Integer, received: " ++ show x)
+  fromPrimitivePersistValue _ x = readIntegral (T.signed T.decimal) x ("Expected Integer, received: " ++ show x)
 
 instance PrimitivePersistField Word32 where
   toPrimitivePersistValue _ a = PersistInt64 (fromIntegral a)
   fromPrimitivePersistValue _ (PersistInt64 a) = fromIntegral a
   fromPrimitivePersistValue _ (PersistDouble a) = truncate a
-  fromPrimitivePersistValue _ x = readHelper x ("Expected Integer, received: " ++ show x)
+  fromPrimitivePersistValue _ x = readIntegral (T.signed T.decimal) x ("Expected Integer, received: " ++ show x)
 
 instance PrimitivePersistField Word64 where
   toPrimitivePersistValue _ a = PersistInt64 (fromIntegral a)
   fromPrimitivePersistValue _ (PersistInt64 a) = fromIntegral a
   fromPrimitivePersistValue _ (PersistDouble a) = truncate a
-  fromPrimitivePersistValue _ x = readHelper x ("Expected Integer, received: " ++ show x)
+  fromPrimitivePersistValue _ x = readIntegral (T.signed T.decimal) x ("Expected Integer, received: " ++ show x)
 
 instance PrimitivePersistField Double where
   toPrimitivePersistValue _ a = PersistDouble a
   fromPrimitivePersistValue _ (PersistDouble a) = a
   fromPrimitivePersistValue _ (PersistInt64 a) = fromIntegral a
-  fromPrimitivePersistValue _ x = readHelper x ("Expected Double, received: " ++ show x)
+  fromPrimitivePersistValue _ x = readIntegral (T.signed T.rational) x ("Expected Double, received: " ++ show x)
 
 instance PrimitivePersistField Bool where
   toPrimitivePersistValue _ a = PersistBool a
@@ -261,7 +269,21 @@ instance NeverNull ZonedTime
 instance PrimitivePersistField (Key v u) => NeverNull (Key v u)
 instance NeverNull (KeyForBackend db v)
 
-readHelper :: Read a => PersistValue -> String -> a
+class Reader
+
+readIntegral :: T.Reader a -> PersistValue -> String -> a
+readIntegral dec s errMessage = case s of
+  PersistString str -> readHelper' (T.pack str)
+  PersistText str -> readHelper' str
+  PersistByteString str -> readHelper' (T.decodeUtf8With T.lenientDecode str)
+  _ -> error $ "readHelper: " ++ errMessage
+  where
+    readHelper' str = case dec str of
+      Right (a, _) -> a
+      Left _        -> error $ "readHelper: " ++ errMessage
+
+
+readHelper :: (Read a) => PersistValue -> String -> a
 readHelper s errMessage = case s of
   PersistString str -> readHelper' str
   PersistByteString str -> readHelper' (unpack str)
@@ -293,7 +315,7 @@ instance PersistField T.Text where
   persistName _ = "Text"
   toPersistValues = primToPersistValue
   fromPersistValues = primFromPersistValue
-  dbType _ _ = DbTypePrimitive DbString False Nothing Nothing
+  dbType _ _ = DbTypePrimitive DbText False Nothing Nothing
 
 instance PersistField Int where
   persistName _ = "Int"
@@ -393,7 +415,7 @@ instance PersistField ZonedTime where
 -- instance (PersistField a, NeverNull a) => PersistField (Maybe a) where -- OK
 -- instance (SinglePersistField a, NeverNull a) => PersistField (Maybe a) where -- HANGS
 instance (PersistField a, NeverNull a) => PersistField (Maybe a) where
-  persistName a = "Maybe" ++ delim : persistName ((undefined :: Maybe a -> a) a)
+  persistName a = "Maybe" <> delim <> persistName ((undefined :: Maybe a -> a) a)
   toPersistValues Nothing = return (PersistNull:)
   toPersistValues (Just a) = toPersistValues a
   fromPersistValues [] = fail "fromPersistValues Maybe: empty list"
@@ -403,23 +425,23 @@ instance (PersistField a, NeverNull a) => PersistField (Maybe a) where
     DbTypePrimitive t _ def ref -> DbTypePrimitive t True def ref
     DbEmbedded (EmbeddedDef concatName [(field, DbTypePrimitive t _ def ref')]) ref ->
       DbEmbedded (EmbeddedDef concatName [(field, DbTypePrimitive t True def ref')]) ref
-    t -> error $ "dbType " ++ persistName a ++ ": expected DbTypePrimitive or DbEmbedded with one field, got " ++ show t
+    t -> error $ "dbType " ++ (T.unpack $ persistName a) ++ ": expected DbTypePrimitive or DbEmbedded with one field, got " ++ show t
 
 instance (PersistField a) => PersistField [a] where
-  persistName a = "List" ++ delim : delim : persistName ((undefined :: [] a -> a) a)
+  persistName a = "List" <> delim <> delim <> persistName ((undefined :: [] a -> a) a)
   toPersistValues l = insertList l >>= toPersistValues
   fromPersistValues [] = fail "fromPersistValues []: empty list"
   fromPersistValues (x:xs) = phantomDb >>= \p -> getList (fromPrimitivePersistValue p x) >>= \l -> return (l, xs)
   dbType db a = DbList (persistName a) $ dbType db ((undefined :: [] a -> a) a)
 
 instance PersistField () where
-  persistName _ = "Unit" ++ [delim]
+  persistName _ = "Unit" <> delim
   toPersistValues _ = return id
   fromPersistValues xs = return ((), xs)
   dbType _ _ = DbEmbedded (EmbeddedDef False []) Nothing
 
 instance (PersistField a, PersistField b) => PersistField (a, b) where
-  persistName a = "Tuple2" ++ delim : delim : persistName ((undefined :: (a, b) -> a) a) ++ delim : persistName ((undefined :: (a, b) -> b) a)
+  persistName a = "Tuple2" <> delim <> delim <> persistName ((undefined :: (a, b) -> a) a) <> delim <> persistName ((undefined :: (a, b) -> b) a)
   toPersistValues (a, b) = do
     a' <- toPersistValues a
     b' <- toPersistValues b
@@ -431,7 +453,7 @@ instance (PersistField a, PersistField b) => PersistField (a, b) where
   dbType db a = DbEmbedded (EmbeddedDef False [("val0", dbType db ((undefined :: (a, b) -> a) a)), ("val1", dbType db ((undefined :: (a, b) -> b) a))]) Nothing
   
 instance (PersistField a, PersistField b, PersistField c) => PersistField (a, b, c) where
-  persistName a = "Tuple3" ++ delim : delim : persistName ((undefined :: (a, b, c) -> a) a) ++ delim : persistName ((undefined :: (a, b, c) -> b) a) ++ delim : persistName ((undefined :: (a, b, c) -> c) a)
+  persistName a = "Tuple3" <> delim <> delim <> persistName ((undefined :: (a, b, c) -> a) a) <> delim <> persistName ((undefined :: (a, b, c) -> b) a) <> delim <> persistName ((undefined :: (a, b, c) -> c) a)
   toPersistValues (a, b, c) = do
     a' <- toPersistValues a
     b' <- toPersistValues b
@@ -445,7 +467,7 @@ instance (PersistField a, PersistField b, PersistField c) => PersistField (a, b,
   dbType db a = DbEmbedded (EmbeddedDef False [("val0", dbType db ((undefined :: (a, b, c) -> a) a)), ("val1", dbType db ((undefined :: (a, b, c) -> b) a)), ("val2", dbType db ((undefined :: (a, b, c) -> c) a))]) Nothing
   
 instance (PersistField a, PersistField b, PersistField c, PersistField d) => PersistField (a, b, c, d) where
-  persistName a = "Tuple4" ++ delim : delim : persistName ((undefined :: (a, b, c, d) -> a) a) ++ delim : persistName ((undefined :: (a, b, c, d) -> b) a) ++ delim : persistName ((undefined :: (a, b, c, d) -> c) a) ++ delim : persistName ((undefined :: (a, b, c, d) -> d) a)
+  persistName a = "Tuple4" <> delim <> delim <> persistName ((undefined :: (a, b, c, d) -> a) a) <> delim <> persistName ((undefined :: (a, b, c, d) -> b) a) <> delim <> persistName ((undefined :: (a, b, c, d) -> c) a) <> delim <> persistName ((undefined :: (a, b, c, d) -> d) a)
   toPersistValues (a, b, c, d) = do
     a' <- toPersistValues a
     b' <- toPersistValues b
@@ -461,7 +483,7 @@ instance (PersistField a, PersistField b, PersistField c, PersistField d) => Per
   dbType db a = DbEmbedded (EmbeddedDef False [("val0", dbType db ((undefined :: (a, b, c, d) -> a) a)), ("val1", dbType db ((undefined :: (a, b, c, d) -> b) a)), ("val2", dbType db ((undefined :: (a, b, c, d) -> c) a)), ("val3", dbType db ((undefined :: (a, b, c, d) -> d) a))]) Nothing
   
 instance (PersistField a, PersistField b, PersistField c, PersistField d, PersistField e) => PersistField (a, b, c, d, e) where
-  persistName a = "Tuple5" ++ delim : delim : persistName ((undefined :: (a, b, c, d, e) -> a) a) ++ delim : persistName ((undefined :: (a, b, c, d, e) -> b) a) ++ delim : persistName ((undefined :: (a, b, c, d, e) -> c) a) ++ delim : persistName ((undefined :: (a, b, c, d, e) -> d) a) ++ delim : persistName ((undefined :: (a, b, c, d, e) -> e) a)
+  persistName a = "Tuple5" <> delim <> delim <> persistName ((undefined :: (a, b, c, d, e) -> a) a) <> delim <> persistName ((undefined :: (a, b, c, d, e) -> b) a) <> delim <> persistName ((undefined :: (a, b, c, d, e) -> c) a) <> delim <> persistName ((undefined :: (a, b, c, d, e) -> d) a) <> delim <> persistName ((undefined :: (a, b, c, d, e) -> e) a)
   toPersistValues (a, b, c, d, e) = do
     a' <- toPersistValues a
     b' <- toPersistValues b
@@ -479,7 +501,7 @@ instance (PersistField a, PersistField b, PersistField c, PersistField d, Persis
   dbType db a = DbEmbedded (EmbeddedDef False [("val0", dbType db ((undefined :: (a, b, c, d, e) -> a) a)), ("val1", dbType db ((undefined :: (a, b, c, d, e) -> b) a)), ("val2", dbType db ((undefined :: (a, b, c, d, e) -> c) a)), ("val3", dbType db ((undefined :: (a, b, c, d, e) -> d) a)), ("val4", dbType db ((undefined :: (a, b, c, d, e) -> e) a))]) Nothing
 
 instance (DbDescriptor db, PersistEntity v, PersistField v) => PersistField (KeyForBackend db v) where
-  persistName a = "KeyForBackend" ++ delim : persistName ((undefined :: KeyForBackend db v -> v) a)
+  persistName a = "KeyForBackend" <> delim <> persistName ((undefined :: KeyForBackend db v -> v) a)
   toPersistValues = primToPersistValue
   fromPersistValues = primFromPersistValue
   dbType db a = dbType db ((undefined :: KeyForBackend db v -> DefaultKey v) a)
@@ -625,7 +647,7 @@ instance Constructor c => EntityConstr' HTrue c where
   entityConstrNum' _ = phantomConstrNum
 
 instance A.FromJSON PersistValue where
-  parseJSON (A.String t) = return $ PersistString $ T.unpack t
+  parseJSON (A.String t) = return $ PersistText $ t
 #if MIN_VERSION_aeson(0, 7, 0)
   parseJSON (A.Number n) = return $
     if fromInteger (floor n) == n
@@ -641,6 +663,7 @@ instance A.FromJSON PersistValue where
 
 instance A.ToJSON PersistValue where
   toJSON (PersistString t) = A.String $ T.pack t
+  toJSON (PersistText t) = A.String $ t
   toJSON (PersistByteString b) = A.String $ T.decodeUtf8 $ B64.encode b
   toJSON (PersistInt64 i) = A.Number $ fromIntegral i
   toJSON (PersistDouble d) = A.Number $
@@ -651,9 +674,9 @@ instance A.ToJSON PersistValue where
 #endif
   toJSON (PersistBool b) = A.Bool b
   toJSON (PersistTimeOfDay t) = A.String $ T.pack $ show t
-  toJSON (PersistUTCTime u) = A.String $ T.pack $ show u
+  toJSON (PersistUTCTime u) = A.toJSON u
   toJSON (PersistDay d) = A.String $ T.pack $ show d
-  toJSON (PersistZonedTime (ZT z)) = A.String $ T.pack $ show z
+  toJSON (PersistZonedTime (ZT z)) = A.toJSON z
   toJSON PersistNull = A.Null
   toJSON a@(PersistCustom _ _) = error $ "toJSON: unexpected " ++ show a
 

@@ -11,6 +11,7 @@ import Criterion.Main
 import Data.Maybe
 import Data.Monoid
 import Data.String
+import Data.Text
 
 data SomeData = SomeData {
     intField :: Int

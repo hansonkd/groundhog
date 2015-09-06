@@ -27,6 +27,8 @@ module Database.Groundhog.Generic.Sql
     , fromUtf8
     , StringLike(..)
     , fromString
+    , textToRender
+    , textToUtf8
     , (<>)
     , function
     , operator
@@ -46,11 +48,16 @@ import qualified Blaze.ByteString.Builder.Char.Utf8 as B
 import Data.Maybe (mapMaybe, maybeToList)
 import Data.Monoid
 import Data.String
+import Data.Text (Text, unpack, singleton)
 
 import Database.Groundhog.Expression
 
 class (Monoid a, IsString a) => StringLike a where
   fromChar :: Char -> a
+
+
+class (Monoid a) => TextLike a where
+    fromText :: Text -> a
 
 data RenderS db r = RenderS {
     getQuery  :: Utf8
@@ -67,6 +74,9 @@ instance IsString Utf8 where
 instance StringLike Utf8 where
   fromChar = Utf8 . B.fromChar
 
+instance StringLike Text where
+  fromChar = singleton
+
 -- | Escape function, priority of the outer operator. The result is a list for the embedded data which may expand to several RenderS.
 newtype Snippet db r = Snippet (RenderConfig -> Int -> [RenderS db r])
 
@@ -76,7 +86,7 @@ newtype RenderConfig = RenderConfig {
 
 -- | This class distinguishes databases which support SQL-specific expressions. It contains ad hoc members for features whose syntax differs across the databases.
 class (DbDescriptor db, QueryRaw db ~ Snippet db) => SqlDb db where
-  append :: (ExpressionOf db r a String, ExpressionOf db r b String) => a -> b -> Expr db r String
+  append :: (ExpressionOf db r a Text, ExpressionOf db r b Text) => a -> b -> Expr db r Text
   signum' :: (ExpressionOf db r x a, Num a) => x -> Expr db r a
   quotRem' :: (ExpressionOf db r x a, ExpressionOf db r y a, Integral a) => x -> y -> (Expr db r a, Expr db r a)
 
@@ -151,16 +161,22 @@ instance StringLike (RenderS db r) where
 instance StringLike String where
   fromChar c = [c]
 
+textToRender :: Text -> RenderS db r
+textToRender t = RenderS (textToUtf8 t) id
+
+textToUtf8 :: Text -> Utf8
+textToUtf8 t = Utf8 $ B.fromText t
+
 {-# INLINABLE parens #-}
 parens :: Int -> Int -> RenderS db r -> RenderS db r
 parens p1 p2 expr = if p1 < p2 then fromChar '(' <> expr <> fromChar ')' else expr
 
-operator :: (SqlDb db, Expression db r a, Expression db r b) => Int -> String -> a -> b -> Snippet db r
+operator :: (SqlDb db, Expression db r a, Expression db r b) => Int -> Text -> a -> b -> Snippet db r
 operator pr op = \a b -> Snippet $ \conf p ->
-  [parens pr p $ renderExprPriority conf pr (toExpr a) <> fromString op <> renderExprPriority conf pr (toExpr b)]
+  [parens pr p $ renderExprPriority conf pr (toExpr a) <> textToRender op <> renderExprPriority conf pr (toExpr b)]
 
-function :: SqlDb db => String -> [UntypedExpr db r] -> Snippet db r
-function func args = Snippet $ \conf _ -> [fromString func <> fromChar '(' <> commasJoin (map (renderExpr conf) args) <> fromChar ')']
+function :: SqlDb db => Text -> [UntypedExpr db r] -> Snippet db r
+function func args = Snippet $ \conf _ -> [textToRender func <> "(" <> commasJoin (map (renderExpr conf) args) <> ")"]
 
 mkExpr :: SqlDb db => Snippet db r -> Expr db r a
 mkExpr = Expr . ExprRaw
@@ -231,13 +247,14 @@ examples of prefixes
 {-# INLINABLE renderChain #-}
 renderChain :: RenderConfig -> FieldChain -> [Utf8] -> [Utf8]
 renderChain RenderConfig{..} (f, prefix) acc = (case prefix of
-  ((name, EmbeddedDef False _):fs) -> flattenP esc (goP (fromString name) fs) f acc
+  ((name, EmbeddedDef False _):fs) -> flattenP esc (Utf8 $ B.fromText $ goP name fs) f acc
   _ -> flatten esc f acc) where
-  goP p ((name, EmbeddedDef False _):fs) = goP (fromString name <> fromChar delim <> p) fs
+  goP p ((name, EmbeddedDef False _):fs) = goP (name <> ( delim <> p)) fs
   goP p _ = p
 
 defaultShowPrim :: PersistValue -> String
 defaultShowPrim (PersistString x) = "'" ++ x ++ "'"
+defaultShowPrim (PersistText x) = unpack x
 defaultShowPrim (PersistByteString x) = "'" ++ show x ++ "'"
 defaultShowPrim (PersistInt64 x) = show x
 defaultShowPrim (PersistDouble x) = show x
@@ -263,28 +280,26 @@ renderOrders conf xs = if null orders then mempty else " ORDER BY " <> commasJoi
 -- Returns string with comma separated escaped fields like "name,age"
 -- If there are other columns before renderFields result, do not put comma because the result might be an empty string. This happens when the fields have no columns like ().
 -- One of the solutions is to add one more field with datatype that is known to have columns, eg renderFields id (("id", namedType (0 :: Int64)) : constrParams constr)
-{-# SPECIALIZE renderFields :: (Utf8 -> Utf8) -> [(String, DbType)] -> Utf8 #-}
-renderFields :: StringLike s => (s -> s) -> [(String, DbType)] -> s
+{-# SPECIALIZE renderFields :: (Utf8 -> Utf8) -> [(Text, DbType)] -> Utf8 #-}
+renderFields :: StringLike s => (s -> s) -> [(Text, DbType)] -> s
 renderFields escape = commasJoin . foldr (flatten escape) []
 
 -- TODO: merge code of flatten and flattenP
-{-# SPECIALIZE flatten :: (Utf8 -> Utf8) -> (String, DbType) -> ([Utf8] -> [Utf8]) #-}
-flatten :: StringLike s => (s -> s) -> (String, DbType) -> ([s] -> [s])
-flatten escape (fname, typ) acc = go typ where
-  go typ' = case typ' of
-    DbEmbedded emb _ -> handleEmb emb
-    _            -> escape fullName : acc
-  fullName = fromString fname
-  handleEmb (EmbeddedDef False ts) = foldr (flattenP escape fullName) acc ts
-  handleEmb (EmbeddedDef True  ts) = foldr (flatten escape) acc ts
+{-# SPECIALIZE flatten :: (Utf8 -> Utf8) -> (Text, DbType) -> ([Utf8] -> [Utf8]) #-}
+flatten :: StringLike s => (s -> s) -> (Text, DbType) -> ([s] -> [s])
+flatten escape = flatten' escape mempty
 
-{-# SPECIALIZE flattenP :: (Utf8 -> Utf8) -> Utf8 -> (String, DbType) -> ([Utf8] -> [Utf8]) #-}
-flattenP :: StringLike s => (s -> s) -> s -> (String, DbType) -> ([s] -> [s])
-flattenP escape prefix (fname, typ) acc = go typ where
+{-# SPECIALIZE flattenP :: (Utf8 -> Utf8) -> Utf8 -> (Text, DbType) -> ([Utf8] -> [Utf8]) #-}
+flattenP :: StringLike s => (s -> s) -> s -> (Text, DbType) -> ([s] -> [s])
+flattenP escape prefix = flatten' escape (prefix <> (fromChar delimChar))
+
+{-# SPECIALIZE flatten' :: (Utf8 -> Utf8) -> Utf8 -> (Text, DbType) -> ([Utf8] -> [Utf8]) #-}
+flatten' :: StringLike s => (s -> s) -> s -> (Text, DbType) -> ([s] -> [s])
+flatten' escape prefix (fname, typ) acc = go typ where
   go typ' = case typ' of
     DbEmbedded emb _ -> handleEmb emb
     _            -> escape fullName : acc
-  fullName = prefix <> fromChar delim <> fromString fname
+  fullName = prefix <> (fromString $ unpack fname)
   handleEmb (EmbeddedDef False ts) = foldr (flattenP escape fullName) acc ts
   handleEmb (EmbeddedDef True  ts) = foldr (flatten escape) acc ts
 
@@ -313,15 +328,15 @@ renderUpdates conf upds = (case mapMaybe go upds of
 tableName :: StringLike s => (s -> s) -> EntityDef -> ConstructorDef -> s
 tableName esc e c = qualifySchema esc e tName where
   tName = esc $ if isSimple (constructors e)
-    then fromString $ entityName e
-    else fromString (entityName e) <> fromChar delim <> fromString (constrName c)
+    then fromString $ unpack $ entityName e
+    else fromString $ unpack $ (entityName e) <> delim <> (constrName c)
 
 -- | Returns escaped main table name optionally qualified with schema
 {-# SPECIALIZE mainTableName :: (Utf8 -> Utf8) -> EntityDef -> Utf8 #-}
 mainTableName :: StringLike s => (s -> s) -> EntityDef -> s
 mainTableName esc e = qualifySchema esc e tName where
-  tName = esc $ fromString $ entityName e
+  tName = esc $ fromString $ unpack $ entityName e
 
 {-# SPECIALIZE qualifySchema :: (Utf8 -> Utf8) -> EntityDef -> Utf8 -> Utf8 #-}
 qualifySchema :: StringLike s => (s -> s) -> EntityDef -> s -> s
-qualifySchema esc e name = maybe name (\sch -> esc (fromString sch) <> fromChar '.' <> name) $ entitySchema e
+qualifySchema esc e name = maybe name (\sch -> esc (fromString $ unpack sch) <> fromChar '.' <> name) $ entitySchema e
