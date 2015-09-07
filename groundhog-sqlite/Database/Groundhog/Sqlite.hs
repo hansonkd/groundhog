@@ -177,7 +177,7 @@ migrationPack = GM.MigrationPack
   (utf8ToText mainTableId)
   defaultPriority
   addUniquesReferences
-  showSqlType
+  (textToUtf8 . showSqlType)
   showColumn
   showAlterDb
   NoAction
@@ -287,7 +287,7 @@ getStatement sql = do
   Sqlite conn _ <- DbPersist ask
   liftIO $ S.prepareUtf8 conn $ SD.Utf8 $ fromUtf8 sql
 
-showSqlType :: DbTypePrimitive -> Utf8
+showSqlType :: DbTypePrimitive -> T.Text
 showSqlType t = case t of
   DbString -> "VARCHAR"
   DbText -> "TEXT"
@@ -300,7 +300,7 @@ showSqlType t = case t of
   DbDayTime -> "TIMESTAMP"
   DbDayTimeZoned -> "TIMESTAMP WITH TIME ZONE"
   DbBlob -> "BLOB"
-  DbOther (OtherTypeDef ts) -> foldMap (either id (showSqlType . textToUtf8)) ts
+  DbOther (OtherTypeDef ts) -> foldMap (either id (showSqlType)) ts
 
 readSqlType :: T.Text -> DbTypePrimitive
 readSqlType typ = case (T.toUpper typ) of
@@ -319,7 +319,7 @@ readSqlType typ = case (T.toUpper typ) of
 data Affinity = TEXT | NUMERIC | INTEGER | REAL | NONE deriving (Eq, Show)
 
 dbTypeAffinity :: DbTypePrimitive -> Affinity
-dbTypeAffinity = readSqlTypeAffinity . utf8ToText . showSqlType
+dbTypeAffinity = readSqlTypeAffinity . showSqlType
 
 readSqlTypeAffinity :: T.Text -> Affinity
 readSqlTypeAffinity typ = affinity where
@@ -332,7 +332,7 @@ readSqlTypeAffinity typ = affinity where
     _ -> NUMERIC
 
 showColumn :: Column -> Utf8
-showColumn (Column name nullable typ def) = escapeS (name) <> " " <> (showSqlType typ) <> rest where
+showColumn (Column name nullable typ def) = escapeS (name) <> " " <> (textToUtf8 $ showSqlType typ) <> rest where
   rest = mconcat [
     if not nullable then " NOT NULL" else "",
     maybe "" (" DEFAULT " <>) def]

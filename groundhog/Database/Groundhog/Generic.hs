@@ -188,7 +188,7 @@ data PSFieldDef str = PSFieldDef {
 
 applyDbTypeSettings :: PSFieldDef Text -> DbType -> DbType
 applyDbTypeSettings (PSFieldDef _ _ dbTypeName _ Nothing def psRef) typ = case typ of
-  DbTypePrimitive t nullable def' ref -> DbTypePrimitive (maybe t (\typeName -> DbOther $ OtherTypeDef [Left typeName]) (fmap textToUtf8 dbTypeName)) nullable (def <|> def') (applyReferencesSettings psRef ref)
+  DbTypePrimitive t nullable def' ref -> DbTypePrimitive (maybe t (\typeName -> DbOther $ OtherTypeDef [Left $ typeName]) (dbTypeName)) nullable (def <|> def') (applyReferencesSettings psRef ref)
   DbEmbedded emb ref -> DbEmbedded emb (applyReferencesSettings psRef ref)
   t -> t
 applyDbTypeSettings (PSFieldDef _ _ _ _ (Just subs) _ psRef) typ = (case typ of

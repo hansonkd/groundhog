@@ -506,7 +506,7 @@ data DbTypePrimitive' str =
     | DbOther (OtherTypeDef' str)
   deriving (Eq, Show)
 
-type DbTypePrimitive = DbTypePrimitive' Utf8
+type DbTypePrimitive = DbTypePrimitive' Text
 
 data DbType = 
     -- | type, nullable, default value, reference

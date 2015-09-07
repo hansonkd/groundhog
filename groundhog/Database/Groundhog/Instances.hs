@@ -75,38 +75,38 @@ instance PurePersistField () where
   fromPurePersistValues _ xs = ((), xs)
 
 instance (PurePersistField a, PurePersistField b) => PurePersistField (a, b) where
-  toPurePersistValues p (a, b) = toPurePersistValues p a . toPurePersistValues p b
+  toPurePersistValues p (a, b) = a `seq` b `seq`  toPurePersistValues p a . toPurePersistValues p b
   fromPurePersistValues p xs = let
     (a, rest0) = fromPurePersistValues p xs
     (b, rest1) = fromPurePersistValues p rest0
-    in ((a, b), rest1)
+    in a `seq` b `seq` ((a, b), rest1)
 
 instance (PurePersistField a, PurePersistField b, PurePersistField c) => PurePersistField (a, b, c) where
-  toPurePersistValues p (a, b, c) = toPurePersistValues p a . toPurePersistValues p b . toPurePersistValues p c
+  toPurePersistValues p (a, b, c) = a `seq` b `seq` c `seq` toPurePersistValues p a . toPurePersistValues p b . toPurePersistValues p c
   fromPurePersistValues p xs = let
     (a, rest0) = fromPurePersistValues p xs
     (b, rest1) = fromPurePersistValues p rest0
     (c, rest2) = fromPurePersistValues p rest1
-    in ((a, b, c), rest2)
+    in a `seq` b `seq` c  `seq` rest2 `seq`  ((a, b, c), rest2)
   
 instance (PurePersistField a, PurePersistField b, PurePersistField c, PurePersistField d) => PurePersistField (a, b, c, d) where
-  toPurePersistValues p (a, b, c, d) = toPurePersistValues p a . toPurePersistValues p b . toPurePersistValues p c . toPurePersistValues p d
+  toPurePersistValues p (a, b, c, d) = a `seq` b `seq` c `seq` d `seq` toPurePersistValues p a . toPurePersistValues p b . toPurePersistValues p c . toPurePersistValues p d
   fromPurePersistValues p xs = let
     (a, rest0) = fromPurePersistValues p xs
     (b, rest1) = fromPurePersistValues p rest0
     (c, rest2) = fromPurePersistValues p rest1
     (d, rest3) = fromPurePersistValues p rest2
-    in ((a, b, c, d), rest3)
+    in a `seq` b `seq` c `seq` d `seq` rest3 `seq` ((a, b, c, d), rest3)
   
 instance (PurePersistField a, PurePersistField b, PurePersistField c, PurePersistField d, PurePersistField e) => PurePersistField (a, b, c, d, e) where
-  toPurePersistValues p (a, b, c, d, e) = toPurePersistValues p a . toPurePersistValues p b . toPurePersistValues p c . toPurePersistValues p d . toPurePersistValues p e
+  toPurePersistValues p (a, b, c, d, e) = a `seq` b `seq` c `seq` d `seq` e `seq` toPurePersistValues p a . toPurePersistValues p b . toPurePersistValues p c . toPurePersistValues p d . toPurePersistValues p e
   fromPurePersistValues p xs = let
     (a, rest0) = fromPurePersistValues p xs
     (b, rest1) = fromPurePersistValues p rest0
     (c, rest2) = fromPurePersistValues p rest1
     (d, rest3) = fromPurePersistValues p rest2
     (e, rest4) = fromPurePersistValues p rest3
-    in ((a, b, c, d, e), rest4)
+    in a `seq` b `seq` c `seq` d `seq` e `seq` rest4 `seq` ((a, b, c, d, e), rest4)
 
 instance PrimitivePersistField String where
   toPrimitivePersistValue _ s = PersistText (T.pack s)
