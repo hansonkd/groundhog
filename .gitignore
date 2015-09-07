@@ -2,6 +2,10 @@ dist/
 *.hi
 *.o
 *~
-
+*.dyn_ho
+*.dyn_hi
+*.dyn_o
+*.p_o
+*.p_hi
 .cabal-sandbox/
 cabal.sandbox.config

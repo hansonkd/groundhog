@@ -174,7 +174,7 @@ migrationPack = GM.MigrationPack
   GM.defaultMigConstr
   escapeS
   "INTEGER PRIMARY KEY NOT NULL"
-  (utf8ToText mainTableId)
+  mainTableId
   defaultPriority
   addUniquesReferences
   (textToUtf8 . showSqlType)
@@ -515,6 +515,9 @@ renderConfig :: RenderConfig
 renderConfig = RenderConfig {
     esc = escapeS
 }
+
+escapeS :: Utf8 -> Utf8
+escapeS a = let q = fromChar '`' in q <> a <> q
 
 defaultPriority, triggerPriority :: Int
 defaultPriority = 0

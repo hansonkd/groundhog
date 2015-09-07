@@ -105,8 +105,8 @@ data MigrationPack m = MigrationPack {
   , migTriggerOnUpdate :: QualifiedName -> [(Utf8, Utf8)] -> m [(Bool, [AlterDB])]
   , migConstr :: MigrationPack m -> EntityDef -> ConstructorDef -> m (Bool, SingleMigration)
   , escape :: Utf8 -> Utf8
-  , autoincrementedKeyTypeName :: Text
-  , mainTableId :: Text
+  , autoincrementedKeyTypeName :: Utf8
+  , mainTableId :: Utf8
   , defaultPriority :: Int
   -- | Sql pieces for the create table statement that add constraints and alterations for running after the table is created
   , addUniquesReferences :: [UniqueDefInfo] -> [Reference] -> ([Utf8], [AlterTable])
@@ -202,7 +202,7 @@ migrateEntity m@MigrationPack{..} e = do
   autoKeyType <- fmap getAutoKeyType phantomDb
   let name = entityName e
       constrs = constructors e
-      mainTableQuery = "CREATE TABLE " <> escape (textToUtf8 name) <> " (" <> (textToUtf8 mainTableId) <> " " <> (textToUtf8 autoincrementedKeyTypeName) <> ", discr INTEGER NOT NULL)"
+      mainTableQuery = "CREATE TABLE " <> escape (textToUtf8 name) <> " (" <> mainTableId <> " " <> autoincrementedKeyTypeName <> ", discr INTEGER NOT NULL)"
       expectedMainStructure = TableInfo [Column "id" False autoKeyType Nothing, Column "discr" False DbInt32 Nothing] [UniqueDef Nothing (UniquePrimary True) [Left "id"]] []
 
   if isSimple constrs
@@ -242,7 +242,7 @@ migrateList m@MigrationPack{..} (DbList mainName t) = do
       (valueCols, valueRefs) = (($ []) . mkColumns autoKeyType) &&& mkReferences autoKeyType $ ("value", t)
       refs' = Reference (Nothing, textToUtf8 mainName) [("id", "id")] (Just Cascade) Nothing : valueRefs
       expectedMainStructure = TableInfo [Column "id" False autoKeyType Nothing] [UniqueDef Nothing (UniquePrimary True) [Left "id"]] []
-      mainQuery = "CREATE TABLE " <> escape (textToUtf8 mainName) <> " (id " <> (textToUtf8 autoincrementedKeyTypeName) <> ")"
+      mainQuery = "CREATE TABLE " <> escape (textToUtf8 mainName) <> " (id " <> autoincrementedKeyTypeName <> ")"
       (addInCreate, addInAlters) = addUniquesReferences [] refs'
       expectedValuesStructure = TableInfo valueColumns [] (map (\x -> (Nothing, x)) refs')
       valueColumns = Column "id" False autoKeyType Nothing : Column "ord" False DbInt32 Nothing : valueCols
@@ -324,7 +324,7 @@ defaultMigConstr m@MigrationPack{..} e constr = do
       qualifiedCName = (fmap textToUtf8  (entitySchema e), textToUtf8 $ if simple then name else name <> delim <> constrName constr)
   autoKeyType <- fmap getAutoKeyType phantomDb
   tableStructure <- analyzeTable qualifiedCName
-  let dels = concatMap (mkDeletes (escapeS)) $ (map (\(a, b) -> (textToUtf8 a, b)) (constrParams constr))
+  let dels = concatMap (mkDeletes escape) $ (map (\(a, b) -> (textToUtf8 a, b)) (constrParams constr))
   (triggerExisted, delTrigger) <- migTriggerOnDelete qualifiedCName dels
   updTriggers <- liftM (concatMap snd) $ migTriggerOnUpdate qualifiedCName dels
   
@@ -333,9 +333,9 @@ defaultMigConstr m@MigrationPack{..} e constr = do
         Just keyName -> let keyColumn = Column (textToUtf8 keyName) False autoKeyType Nothing
                         in if simple
           then (TableInfo (keyColumn:columns) (uniques ++ [UniqueDef Nothing (UniquePrimary True) [Left (textToUtf8 keyName)]]) (mkRefs refs)
-               , f [escapeS (textToUtf8 keyName) <> " " <> (textToUtf8 $ autoincrementedKeyTypeName)] columns uniques refs)
+               , f [escape (textToUtf8 keyName) <> " " <> (autoincrementedKeyTypeName)] columns uniques refs)
           else let columns' = keyColumn:columns
-                   refs' = refs ++ [Reference (fmap textToUtf8 $ entitySchema e, textToUtf8 name) [(textToUtf8 keyName, textToUtf8 mainTableId)] (Just Cascade) Nothing]
+                   refs' = refs ++ [Reference (fmap textToUtf8 $ entitySchema e, textToUtf8 name) [(textToUtf8 keyName, mainTableId)] (Just Cascade) Nothing]
                    uniques' = uniques ++ [UniqueDef Nothing UniqueConstraint [Left (textToUtf8 keyName)]]
                in (TableInfo columns' uniques' (mkRefs refs'), f [] columns' uniques' refs')) where
         (columns, refs) = foldr (mkColumns autoKeyType) [] &&& concatMap (mkReferences autoKeyType) $ (map (\(a, b) -> (textToUtf8 a, b)) (constrParams constr))
@@ -343,7 +343,7 @@ defaultMigConstr m@MigrationPack{..} e constr = do
         f autoKey cols uniqs refs' = (addTable', addInAlters') where
           (addInCreate, addInAlters') = addUniquesReferences uniqs refs'
           items = autoKey <> map showColumn cols <> addInCreate
-          addTable' = "CREATE TABLE " <> (tableName (escape) e constr) <> " (" <> (intercalateS ", " items) <> ")"
+          addTable' = "CREATE TABLE " <> (tableName escape e constr) <> " (" <> (intercalateS ", " items) <> ")"
         mkRefs = map (\r -> (Nothing, r))
 
       (migErrs, constrExisted, mig) = case tableStructure of

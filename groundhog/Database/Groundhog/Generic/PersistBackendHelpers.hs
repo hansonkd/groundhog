@@ -119,7 +119,7 @@ selectAllStream RenderConfig{..} queryFunc f = start where
   proxy = undefined :: proxy (PhantomDb m)
   mkEntity cNum = mapPopper $ \xs -> do
     let (k, xs') = fromPurePersistValues proxy xs
-    (v, _) <- fromEntityPersistValues (toPrimitivePersistValue proxy (cNum :: Int):xs)
+    (v, _) <- fromEntityPersistValues (toPrimitivePersistValue proxy (cNum :: Int):xs')
     return (k, v)
 
 getBy :: forall m v u . (PersistBackend m, PersistEntity v, IsUniqueKey (Key v (Unique u)))

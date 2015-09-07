@@ -29,7 +29,6 @@ module Database.Groundhog.Core
   , textToUtf8
   , delim
   , delimChar
-  , escapeS
   , StringLike(..)
   -- * Constructing expressions
   , Cond(..)
@@ -629,9 +628,6 @@ delimChar = '#'
 
 delim :: Text
 delim = singleton delimChar
-
-escapeS :: Utf8 -> Utf8
-escapeS a = let q = fromChar '`' in q <> a <> q
 
 -- | Connection manager provides connection to the passed function handles transations. Manager can be a connection itself, a pool, Snaplet in Snap, foundation datatype in Yesod, etc.
 class ConnectionManager cm conn | cm -> conn where

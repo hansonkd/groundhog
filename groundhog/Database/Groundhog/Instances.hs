@@ -272,11 +272,11 @@ readIntegral :: T.Reader a -> PersistValue -> String -> a
 readIntegral dec s errMessage = case s of
   PersistText str -> readHelper' str
   PersistByteString str -> readHelper' (T.decodeUtf8With T.lenientDecode str)
-  _ -> error $ "readHelper: " ++ errMessage
+  _ -> error $ "readIntegral: " ++ errMessage
   where
     readHelper' str = case dec str of
       Right (a, _) -> a
-      Left _        -> error $ "readHelper: " ++ errMessage
+      Left _        -> error $ "readIntegral: " ++ errMessage
 
 
 readHelper :: (Read a) => PersistValue -> String -> a

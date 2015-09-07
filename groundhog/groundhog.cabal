@@ -40,7 +40,7 @@ library
                      Database.Groundhog.Generic.Sql.Functions
                      Database.Groundhog.Generic.PersistBackendHelpers
                      Database.Groundhog.Instances
-    ghc-options:     -Wall
+    ghc-options:     -Wall -auto-all
     
 source-repository head
   type:     git

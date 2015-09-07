@@ -14,15 +14,18 @@ mkPersist defaultCodegenConfig [groundhog|
 
 -- First, normal build, then profiling build with "-osuf p_o -hisuf p_hi"
 main :: IO ()
-main = withSqlitePool ":memory:" 10 $ \gCon -> runDbConn (do { runMigration $ migrate (undefined :: Person); ps <- replicateM 100 go; liftIO $ print (foldr (((+))) 0 ps)}) gCon
+main = withSqlitePool ":memory:" 10 $ \gCon -> runDbConn (do { runMigration $ migrate (undefined :: Person); res <- foldM (\acc b -> go >>= return . (+) acc) 0 [1..100]; liftIO $ print res}) gCon
   where go = do
           let person = Person (pack "abc") 22 180
           k <- insert $ person
           b <- get k
           -- Do some math
-          (replicateM_ 100 $ insert person)
+          (replicateM_ 1000 $ insert person)
+          replicateM_ 1000 $ get k
+
           rs <- selectAll
-          return (foldr (((+) . age . snd)) 0 rs)
+          let calc = (foldr (((+) . age . snd)) 0 rs)
+          calc `seq` return calc
 
 --  sum foldMreplicateM_ 100000 $ get k --4.3
 --  replicateM_ 10000 $ select $ AgeField ==. (22 :: Int)
