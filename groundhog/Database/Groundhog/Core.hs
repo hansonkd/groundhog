@@ -25,8 +25,12 @@ module Database.Groundhog.Core
   , ZT (..) -- ZonedTime wrapper
   , Utf8(..)
   , fromUtf8
+  , utf8ToText
+  , textToUtf8
   , delim
   , delimChar
+  , escapeS
+  , StringLike(..)
   -- * Constructing expressions
   , Cond(..)
   , ExprRelation(..)
@@ -82,6 +86,7 @@ module Database.Groundhog.Core
   , ConnectionManager(..)
   , SingleConnectionManager
   , Savepoint(..)
+
   ) where
 
 import Blaze.ByteString.Builder (Builder, fromByteString, toByteString)
@@ -100,11 +105,15 @@ import qualified Control.Monad.Error.Class as Mtl
 import qualified Control.Monad.State.Class as Mtl
 import qualified Control.Monad.Writer.Class as Mtl
 import Data.ByteString.Char8 (ByteString)
+import qualified Blaze.ByteString.Builder.Char.Utf8 as B
 import Data.Int (Int64)
 import Data.Map (Map)
+import Data.Monoid
+import Data.String
 import Data.Time (Day, TimeOfDay, UTCTime)
 import Data.Time.LocalTime (ZonedTime, zonedTimeToUTC, zonedTimeToLocalTime, zonedTimeZone)
 import Data.Text (Text, singleton)
+import Data.Text.Encoding as T
 import GHC.Exts (Constraint)
 
 -- | Only instances of this class can be persisted in a database
@@ -403,7 +412,7 @@ type Migration m = StateT NamedMigrations m ()
 type NamedMigrations = Map Text SingleMigration
 
 -- | Either error messages or migration queries with safety flag and execution order
-type SingleMigration = Either [Text] [(Bool, Int, Text)]
+type SingleMigration = Either [Text] [(Bool, Int, Utf8)]
 
 -- $types
 -- These types describe the mapping between database schema and datatype. They hold table names, columns, constraints, etc. Some types below are parameterized by Text type str and dbType. This is done to make them promotable to kind level.
@@ -497,7 +506,7 @@ data DbTypePrimitive' str =
     | DbOther (OtherTypeDef' str)
   deriving (Eq, Show)
 
-type DbTypePrimitive = DbTypePrimitive' Text
+type DbTypePrimitive = DbTypePrimitive' Utf8
 
 data DbType = 
     -- | type, nullable, default value, reference
@@ -515,7 +524,7 @@ type ParentTableReference = (Either (EntityDef, Maybe Text) ((Maybe Text, Text),
 -- | Stores a database type. The list contains two kinds of tokens for the type Text. Backend will choose a Text representation for DbTypePrimitive's, and the Text literals will go to the type as-is. As the final step, these tokens are concatenated. For example, @[Left \"varchar(50)\"]@ will become a Text with max length and @[Right DbInt64, Left \"[]\"]@ will become integer[] in PostgreSQL.
 newtype OtherTypeDef' str = OtherTypeDef ([Either str (DbTypePrimitive' str)]) deriving (Eq, Show)
 
-type OtherTypeDef = OtherTypeDef' Text
+type OtherTypeDef = OtherTypeDef' Utf8
 
 -- | The first argument is a flag which defines if the field names should be concatenated with the outer field name (False) or used as is which provides full control over table column names (True).
 -- Value False should be the default value so that a datatype can be embedded without name conflict concern. The second argument list of field names and field types.
@@ -524,21 +533,30 @@ data EmbeddedDef' str dbType = EmbeddedDef Bool [(str, dbType)] deriving (Eq, Sh
 type EmbeddedDef = EmbeddedDef' Text DbType
 
 -- | Datatype for incremental building SQL queries
-newtype Utf8 = Utf8 Builder
+type Utf8 =  Builder
+
 instance Eq Utf8 where
   a == b = fromUtf8 a == fromUtf8 b
+
 instance Show Utf8 where
   show = show . fromUtf8
 instance Read Utf8 where
-  readsPrec prec str = map (\(a, b) -> (Utf8 $ fromByteString a, b)) $ readsPrec prec str
+  readsPrec prec str = map (\(a, b) -> ( fromByteString a, b)) $ readsPrec prec str
 
 fromUtf8 :: Utf8 -> ByteString
-fromUtf8 (Utf8 a) = toByteString a
+fromUtf8 ( a) = toByteString a
+
+textToUtf8 :: Text -> Utf8
+textToUtf8 t = B.fromText t
+
+
+utf8ToText :: Utf8 -> Text
+utf8ToText a = T.decodeUtf8 $ toByteString a
+
 
 -- | A raw value which can be stored in any backend and can be marshalled to
 -- and from a 'PersistField'.
-data PersistValue = PersistString String
-                  | PersistText Text
+data PersistValue = PersistText Text
                   | PersistByteString ByteString
                   | PersistInt64 Int64
                   | PersistDouble Double
@@ -612,6 +630,9 @@ delimChar = '#'
 delim :: Text
 delim = singleton delimChar
 
+escapeS :: Utf8 -> Utf8
+escapeS a = let q = fromChar '`' in q <> a <> q
+
 -- | Connection manager provides connection to the passed function handles transations. Manager can be a connection itself, a pool, Snaplet in Snap, foundation datatype in Yesod, etc.
 class ConnectionManager cm conn | cm -> conn where
   -- | Extracts the connection from manager and opens the transaction.
@@ -625,3 +646,21 @@ class ConnectionManager cm conn => SingleConnectionManager cm conn
 class Savepoint conn where
   -- | Wraps the passed action into a named savepoint
   withConnSavepoint :: (MonadBaseControl IO m, MonadIO m) => Text -> m a -> conn -> m a
+
+class (Monoid a, IsString a) => StringLike a where
+  fromChar :: Char -> a
+{-
+instance Monoid Utf8 where
+  mempty = Utf8 mempty
+  mappend (Utf8 a) (Utf8 b) = Utf8 (mappend a b)
+
+
+instance IsString Utf8 where
+  fromString = Utf8 . B.fromString
+-}
+
+instance StringLike Utf8 where
+  fromChar = B.fromChar
+
+instance StringLike Text where
+  fromChar = singleton

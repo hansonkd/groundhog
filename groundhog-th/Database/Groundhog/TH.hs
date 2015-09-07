@@ -576,7 +576,7 @@ groundhogFile = quoteFile groundhog
 
 parseDefinitions :: String -> Q Exp
 parseDefinitions s = do
-  result <- runIO $ decodeHelper (Y.decode $ T.encodeUtf8 $ fromString s)
+  result <- runIO $ decodeHelper (Y.decode $ T.encodeUtf8 $ T.pack s)
   case result of
     Left err -> case err of
       InvalidYaml (Just (Y.YamlParseException problem context mark)) -> fail $ unlines

@@ -272,9 +272,6 @@ renderConfig = RenderConfig {
 escapeS :: Utf8 -> Utf8
 escapeS a = let q = fromChar '`' in q <> a <> q
 
-delim' :: Utf8
-delim' = fromChar delim
-
 toEntityPersistValues' :: (MonadBaseControl IO m, MonadIO m, MonadLogger m, PersistEntity v) => v -> DbPersist MySQL m [PersistValue]
 toEntityPersistValues' = liftM ($ []) . toEntityPersistValues
 

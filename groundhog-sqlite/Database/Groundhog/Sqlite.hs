@@ -94,16 +94,16 @@ instance (MonadBaseControl IO m, MonadIO m, MonadLogger m) => PersistBackend (Db
 instance (MonadBaseControl IO m, MonadIO m, MonadLogger m) => SchemaAnalyzer (DbPersist Sqlite m) where
   schemaExists = fail "schemaExists: is not supported by Sqlite"
   getCurrentSchema = return Nothing
-  listTables Nothing = queryRaw' "SELECT name FROM sqlite_master WHERE type='table'" [] (mapAllRows $ return . fst . fromPurePersistValues proxy)
+  listTables Nothing = queryRaw' "SELECT name FROM sqlite_master WHERE type='table'" [] (mapAllRows $ return . textToUtf8 . fst . fromPurePersistValues proxy)
   listTables sch = fail $ "listTables: schemas are not supported by Sqlite: " ++ show sch
-  listTableTriggers (Nothing, name) = queryRaw' "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name=?" [toPrimitivePersistValue proxy name] (mapAllRows $ return . fst . fromPurePersistValues proxy)
+  listTableTriggers (Nothing, name) = queryRaw' "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name=?" [ toPrimitivePersistValue proxy (utf8ToText name)] (mapAllRows $ return . textToUtf8 . fst . fromPurePersistValues proxy)
   listTableTriggers (sch, _) = fail $ "listTableTriggers: schemas are not supported by Sqlite: " ++ show sch
   analyzeTable = analyzeTable'
   analyzeTrigger (Nothing, name) = do
-    x <- queryRaw' "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?" [toPrimitivePersistValue proxy name] id
+    x <- queryRaw' "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?" [toPrimitivePersistValue proxy (utf8ToText name)] id
     case x of
       Nothing  -> return Nothing
-      Just src -> return (fst $ fromPurePersistValues proxy src)
+      Just src -> return (fmap textToUtf8 . fst $ fromPurePersistValues proxy src)
   analyzeTrigger (sch, _) = fail $ "analyzeTrigger: schemas are not supported by Sqlite: " ++ show sch
   analyzeFunction = error "analyzeFunction: is not supported by Sqlite"
   getMigrationPack = return migrationPack
@@ -172,9 +172,9 @@ migrationPack = GM.MigrationPack
   migTriggerOnDelete
   migTriggerOnUpdate
   GM.defaultMigConstr
-  escape
+  escapeS
   "INTEGER PRIMARY KEY NOT NULL"
-  mainTableId
+  (utf8ToText mainTableId)
   defaultPriority
   addUniquesReferences
   showSqlType
@@ -183,11 +183,11 @@ migrationPack = GM.MigrationPack
   NoAction
   NoAction
 
-addUniquesReferences :: [UniqueDefInfo] -> [Reference] -> ([T.Text], [AlterTable])
+addUniquesReferences :: [UniqueDefInfo] -> [Reference] -> ([Utf8], [AlterTable])
 addUniquesReferences uniques refs = (map sqlUnique constraints <> map sqlReference refs, map AddUnique indexes) where
   (constraints, indexes) = partition ((/= UniqueIndex) . uniqueDefType) uniques
 
-migTriggerOnDelete :: (MonadBaseControl IO m, MonadIO m, MonadLogger m) => QualifiedName -> [(T.Text, T.Text)] -> DbPersist Sqlite m (Bool, [AlterDB])
+migTriggerOnDelete :: (MonadBaseControl IO m, MonadIO m, MonadLogger m) => QualifiedName -> [(Utf8, Utf8)] -> DbPersist Sqlite m (Bool, [AlterDB])
 migTriggerOnDelete qualifiedName deletes = do
   let addTrigger = AddTriggerOnDelete qualifiedName qualifiedName (foldMap snd deletes)
   x <- analyzeTrigger qualifiedName
@@ -203,9 +203,9 @@ migTriggerOnDelete qualifiedName deletes = do
         
 -- | Schema name, table name and a list of field names and according delete statements
 -- assume that this function is called only for ephemeral fields
-migTriggerOnUpdate :: (MonadBaseControl IO m, MonadIO m, MonadLogger m) => QualifiedName -> [(T.Text, T.Text)] -> DbPersist Sqlite m [(Bool, [AlterDB])]
+migTriggerOnUpdate :: (MonadBaseControl IO m, MonadIO m, MonadLogger m) => QualifiedName -> [(Utf8, Utf8)] -> DbPersist Sqlite m [(Bool, [AlterDB])]
 migTriggerOnUpdate name dels = forM dels $ \(fieldName, del) -> do
-  let trigName = (Nothing, snd name <> delim <> fieldName)
+  let trigName = (Nothing, snd name <> delim' <> fieldName)
   let addTrigger = AddTriggerOnUpdate trigName name (Just fieldName) del
   x <- analyzeTrigger trigName
   return $ case x of
@@ -216,25 +216,25 @@ migTriggerOnUpdate name dels = forM dels $ \(fieldName, del) -> do
 
 analyzeTable' :: (MonadBaseControl IO m, MonadIO m, MonadLogger m) => QualifiedName -> DbPersist Sqlite m (Maybe TableInfo)
 analyzeTable' (Nothing, tName) = do
-  let fromName = textToUtf8 . escape
+  let fromName =  escapeS
   tableInfo <- queryRaw' ("pragma table_info(" <> fromName tName <> ")") [] $ mapAllRows (return . fst . fromPurePersistValues proxy)
   case tableInfo of
     [] -> return Nothing
     rawColumns -> do
       let mkColumn :: (Int, (T.Text, T.Text, Int, Maybe T.Text, Int)) -> Column
-          mkColumn (_, (name, typ, isNotNull, defaultValue, _)) = Column name (isNotNull == 0) (readSqlType typ) defaultValue
+          mkColumn (_, (name, typ, isNotNull, defaultValue, _)) = Column (textToUtf8 name) (isNotNull == 0) (readSqlType typ) (fmap textToUtf8 defaultValue)
           primaryKeyColumnNames = foldr (\(_ , (name, _, _, _, primaryIndex)) xs -> if primaryIndex > 0 then name:xs else xs) [] rawColumns
           columns = map mkColumn rawColumns
       indexList <- queryRaw' ("pragma index_list(" <> fromName tName <> ")") [] $ mapAllRows (return . fst . fromPurePersistValues proxy)
       let uniqueNames = map (\(_ :: Int, name, _) -> name) $ filter (\(_, _, isUnique) -> isUnique) indexList
       uniques <- forM uniqueNames $ \name -> do
-        uFields <- queryRaw' ("pragma index_info(" <> fromName name <> ")") [] $ mapAllRows (return . fst . fromPurePersistValues proxy)
-        sql <- queryRaw' ("select sql from sqlite_master where type = 'index' and name = ?") [toPrimitivePersistValue proxy name] id
+        uFields <- queryRaw' ("pragma index_info(" <> fromName (textToUtf8 name) <> ")") [] $ mapAllRows (return . fst . fromPurePersistValues proxy)
+        sql <- queryRaw' ("select sql from sqlite_master where type = 'index' and name = ?") [toPrimitivePersistValue proxy (name)] id
         let columnNames = map (\(_, _, columnName) -> columnName) (uFields :: [(Int, Int, T.Text)])
             uType = if sql == Just [PersistNull]
-              then if sort columnNames == sort primaryKeyColumnNames then UniquePrimary False else UniqueConstraint
+              then if sort (columnNames) == sort (primaryKeyColumnNames) then UniquePrimary False else UniqueConstraint
               else UniqueIndex
-        return $ UniqueDef (Just name) uType (map Left columnNames)
+        return $ UniqueDef (Just (textToUtf8 name)) uType (map (Left . textToUtf8) columnNames)
       foreignKeyList <- queryRaw' ("pragma foreign_key_list(" <> fromName tName <> ")") [] $ mapAllRows (return . fst . fromPurePersistValues proxy)
       (foreigns :: [(Maybe T.Text, Reference)]) <- do
           let foreigns :: [[(Int, (Int, T.Text, (T.Text, Maybe T.Text), (T.Text, T.Text, T.Text)))]]
@@ -244,30 +244,30 @@ analyzeTable' (Nothing, tName) = do
             let (_, (_, foreignTable, _, (onUpdate, onDelete, _))) = head rows
                 (children, parents) = unzip $ map (\(_, (_, _, pair, _)) -> pair) rows
             parents' <- case head parents of
-              Nothing -> analyzePrimaryKey foreignTable >>= \x -> case x of
+              Nothing -> analyzePrimaryKey (textToUtf8 foreignTable) >>= \x -> case x of
                 Just primaryCols -> return primaryCols
                 Nothing -> error $ T.unpack $ "analyzeTable: cannot find primary key for table " <> foreignTable <> " which is referenced without specifying column names"
-              Just _ -> return $ map (fromMaybe (error "analyzeTable: all parents must be either NULL or values")) parents
-            let refs = zip children parents'
-            return (Nothing, Reference (Nothing, foreignTable) refs (mkAction onDelete) (mkAction onUpdate))
+              Just _ -> return $ map (fromMaybe (error "analyzeTable: all parents must be either NULL or values")) (map (fmap textToUtf8) parents)
+            let refs = zipWith (\a b -> (textToUtf8 a,  b)) children parents'
+            return (Nothing, Reference (Nothing, (textToUtf8 foreignTable)) refs (mkAction onDelete) (mkAction onUpdate))
       let notPrimary x = case x of
             UniquePrimary _ -> False
             _ -> True
           uniques' = uniques ++ 
             if all (notPrimary . uniqueDefType) uniques && not (null primaryKeyColumnNames)
-              then  [UniqueDef Nothing (UniquePrimary True) (map Left primaryKeyColumnNames)]
+              then  [UniqueDef Nothing (UniquePrimary True) (map (Left . textToUtf8) (primaryKeyColumnNames))]
               else []
-      return $ Just $ TableInfo columns uniques' foreigns
+      return $ Just $ TableInfo columns (uniques') (map (\(a, b) -> (fmap textToUtf8 a, b)) foreigns)
 analyzeTable' (sch, _) = fail $ "analyzeTable: schemas are not supported by Sqlite: " ++ show sch
 
-analyzePrimaryKey :: (MonadBaseControl IO m, MonadIO m, MonadLogger m) => T.Text -> DbPersist Sqlite m (Maybe [T.Text])
+analyzePrimaryKey :: (MonadBaseControl IO m, MonadIO m, MonadLogger m) => Utf8 -> DbPersist Sqlite m (Maybe [Utf8])
 analyzePrimaryKey tName = do
-  tableInfo <- queryRaw' (textToUtf8 $ "pragma table_info(" <> escape tName <> ")") [] $ mapAllRows (return . fst . fromPurePersistValues proxy)
+  tableInfo <- queryRaw' ( "pragma table_info(" <> escapeS tName <> ")") [] $ mapAllRows (return . fst . fromPurePersistValues proxy)
   let cols = map (\(_ , (name, _, _, _, primaryIndex)) -> (primaryIndex, name)) (tableInfo ::  [(Int, (T.Text, T.Text, Int, Maybe T.Text, Int))])
       cols' = map snd $ sort $ filter ((> 0) . fst) cols
   return $ if null cols'
     then Nothing
-    else Just cols'
+    else Just (map (textToUtf8) cols')
 
 getStatementCached :: (MonadBaseControl IO m, MonadIO m) => Utf8 -> DbPersist Sqlite m S.Statement
 getStatementCached sql = do
@@ -287,7 +287,7 @@ getStatement sql = do
   Sqlite conn _ <- DbPersist ask
   liftIO $ S.prepareUtf8 conn $ SD.Utf8 $ fromUtf8 sql
 
-showSqlType :: DbTypePrimitive -> T.Text
+showSqlType :: DbTypePrimitive -> Utf8
 showSqlType t = case t of
   DbString -> "VARCHAR"
   DbText -> "TEXT"
@@ -303,7 +303,7 @@ showSqlType t = case t of
   DbOther (OtherTypeDef ts) -> foldMap (either id showSqlType) ts
 
 readSqlType :: T.Text -> DbTypePrimitive
-readSqlType typ = case T.toUpper typ of
+readSqlType typ = case (T.toUpper typ) of
   "VARCHAR" -> DbText
   "TEXT" -> DbText
   "INTEGER" -> DbInt64
@@ -314,12 +314,12 @@ readSqlType typ = case T.toUpper typ of
   "TIMESTAMP" -> DbDayTime
   "TIMESTAMP WITH TIME ZONE" -> DbDayTimeZoned
   "BLOB" -> DbBlob
-  _ -> DbOther $ OtherTypeDef [Left typ]
+  _ -> DbOther $ OtherTypeDef [Left (textToUtf8 typ)]
 
 data Affinity = TEXT | NUMERIC | INTEGER | REAL | NONE deriving (Eq, Show)
 
 dbTypeAffinity :: DbTypePrimitive -> Affinity
-dbTypeAffinity = readSqlTypeAffinity . showSqlType
+dbTypeAffinity = readSqlTypeAffinity . utf8ToText . showSqlType
 
 readSqlTypeAffinity :: T.Text -> Affinity
 readSqlTypeAffinity typ = affinity where
@@ -331,24 +331,24 @@ readSqlTypeAffinity typ = affinity where
     _ | contains ["REAL", "FLOA", "DOUB"]  -> REAL
     _ -> NUMERIC
 
-showColumn :: Column -> T.Text
-showColumn (Column name nullable typ def) = escape name <> " " <> showSqlType typ <> rest where
-  rest = T.concat [
+showColumn :: Column -> Utf8
+showColumn (Column name nullable typ def) = escapeS (name) <> " " <> (showSqlType typ) <> rest where
+  rest = mconcat [
     if not nullable then " NOT NULL" else "",
     maybe "" (" DEFAULT " <>) def]
 
-sqlReference :: Reference -> T.Text
-sqlReference Reference{..} = "FOREIGN KEY(" <> our <> ") REFERENCES " <> escape (snd referencedTableName) <> "(" <> foreign <> ")" <> actions where
+sqlReference :: Reference -> Utf8
+sqlReference Reference{..} = "FOREIGN KEY(" <> our <> ") REFERENCES " <> escapeS (snd referencedTableName) <> "(" <> foreign <> ")" <> actions where
   actions = maybe "" ((" ON DELETE " <>) . showReferenceAction) referenceOnDelete
          <> maybe "" ((" ON UPDATE " <>) . showReferenceAction) referenceOnUpdate
   (our, foreign) = f *** f $ unzip referencedColumns
-  f = T.intercalate ", " . map escape
+  f = intercalateS ", " . map escapeS
 
-sqlUnique :: UniqueDefInfo -> T.Text
-sqlUnique (UniqueDef name typ cols) = T.concat [
-    maybe "" (\x -> "CONSTRAINT " <> escape x <> " ") name
+sqlUnique :: UniqueDefInfo -> Utf8
+sqlUnique (UniqueDef name typ cols) = mconcat [
+    maybe "" (\x -> "CONSTRAINT " <> escapeS x <> " ") name
   , constraintType
-  , T.intercalate "," $ map (either escape id) cols
+  , intercalateS "," $ map (either escapeS id) cols
   , ")"
   ] where
     constraintType = case typ of
@@ -450,7 +450,6 @@ bind stmt = go 1 where
   go i (x:xs) = do
     case x of
       PersistInt64 int64      -> S.bindInt64 stmt i int64
-      PersistString text      -> S.bindText stmt i $ T.pack text
       PersistText text        -> S.bindText stmt i $ text
       PersistDouble double    -> S.bindDouble stmt i double
       PersistBool b           -> S.bindInt64 stmt i $ if b then 1 else 0
@@ -512,13 +511,6 @@ pFromSql (S.SQLText s)    = PersistText s
 pFromSql (S.SQLBlob bs)   = PersistByteString bs
 pFromSql (S.SQLNull)      = PersistNull
 
--- It is used to escape table names and columns, which can include only symbols allowed in Haskell datatypes and '$' delimiter. We need it mostly to support names that coincide with SQL keywords
-escape :: T.Text -> T.Text
-escape s = "\"" <> s <> "\""
-
-escapeS :: Utf8 -> Utf8
-escapeS a = let q = fromChar '"' in q <> a <> q
-
 renderConfig :: RenderConfig
 renderConfig = RenderConfig {
     esc = escapeS
@@ -531,9 +523,6 @@ triggerPriority = 1
 proxy :: proxy Sqlite
 proxy = error "proxy Sqlite"
 
-delim' :: Utf8
-delim' = fromChar delimChar
-
 toEntityPersistValues' :: (MonadBaseControl IO m, MonadIO m, MonadLogger m, PersistEntity v) => v -> DbPersist Sqlite m [PersistValue]
 toEntityPersistValues' = liftM ($ []) . toEntityPersistValues
 
@@ -541,22 +530,22 @@ compareUniqs :: UniqueDefInfo -> UniqueDefInfo -> Bool
 compareUniqs (UniqueDef _ (UniquePrimary _) cols1) (UniqueDef _ (UniquePrimary _) cols2) = haveSameElems (==) cols1 cols2
 compareUniqs (UniqueDef _ type1 cols1) (UniqueDef _ type2 cols2) = haveSameElems (==) cols1 cols2 && type1 == type2
 
-compareRefs :: (Maybe T.Text, Reference) -> (Maybe T.Text, Reference) -> Bool
+compareRefs :: (Maybe Utf8, Reference) -> (Maybe Utf8, Reference) -> Bool
 compareRefs (_, Reference tbl1 pairs1 onDel1 onUpd1) (_, Reference tbl2 pairs2 onDel2 onUpd2) =
      unescape (snd tbl1) == unescape (snd tbl2)
   && haveSameElems (==) pairs1 pairs2
   && fromMaybe NoAction onDel1 == fromMaybe NoAction onDel2
   && fromMaybe NoAction onUpd1 == fromMaybe NoAction onUpd2 where
-  unescape name = if T.head name == '"' && T.last name == '"' then T.tail $ T.init name else name
+  unescape name = let tname = utf8ToText name in if T.head tname == '"' && T.last tname == '"' then (textToUtf8 $ T.tail $ T.init tname) else name
 
 compareTypes :: DbTypePrimitive -> DbTypePrimitive -> Bool
 compareTypes type1 type2 = dbTypeAffinity type1 == dbTypeAffinity type2
 --compareTypes type1 type2 = showSqlType type1 == showSqlType type2
 
-compareDefaults :: T.Text -> T.Text -> Bool
+compareDefaults :: Utf8 -> Utf8 -> Bool
 compareDefaults = (==)
 
-mainTableId :: T.Text
+mainTableId :: Utf8
 mainTableId = "id"
 
 showAlterDb :: AlterDB -> SingleMigration
@@ -564,56 +553,56 @@ showAlterDb (AddTable s) = Right [(False, defaultPriority, s)]
 showAlterDb (AlterTable (_, table) createTable (TableInfo oldCols _ _) (TableInfo newCols _ _) alts) = case mapM (showAlterTable table) alts of
   Just alts' -> Right alts'
   Nothing -> (Right
-    [ (False, defaultPriority, "CREATE TEMP TABLE " <> escape tableTmp <> "(" <> columnsTmp <> ")")
+    [ (False, defaultPriority, "CREATE TEMP TABLE " <> escapeS tableTmp <> "(" <> columnsTmp <> ")")
     , (False, defaultPriority, copy (table, columnsTmp) (tableTmp, columnsTmp))
-    , (not (null oldOnlyColumns), defaultPriority, "DROP TABLE " <> escape table)
+    , (not (null oldOnlyColumns), defaultPriority, "DROP TABLE " <> escapeS table)
     , (False, defaultPriority, createTable)
     , (False, defaultPriority, copy (tableTmp, columnsTmp) (table, columnsNew))
-    , (False, defaultPriority, "DROP TABLE " <> escape tableTmp)
+    , (False, defaultPriority, "DROP TABLE " <> escapeS tableTmp)
     ]) where
       tableTmp = table <> "_backup"
-      copy (from, fromCols) (to, toCols) = "INSERT INTO " <> escape to <> "(" <> toCols <> ") SELECT " <> fromCols <> " FROM " <> escape from
+      copy (from, fromCols) (to, toCols) = "INSERT INTO " <> escapeS to <> "(" <> toCols <> ") SELECT " <> fromCols <> " FROM " <> escapeS from
       (oldOnlyColumns, _, commonColumns) = matchElements ((==) `on` colName) oldCols newCols
-      columnsTmp = T.intercalate "," $ map (escape . colName . snd) commonColumns
-      columnsNew = T.intercalate "," $ map (escape . colName . snd) commonColumns
-showAlterDb (DropTrigger trigName _) = Right [(False, triggerPriority, "DROP TRIGGER " <> escape (snd trigName))]
+      columnsTmp = intercalateS "," $ map (escapeS . colName . snd) commonColumns
+      columnsNew = intercalateS "," $ map (escapeS . colName . snd) commonColumns
+showAlterDb (DropTrigger trigName _) = Right [(False, triggerPriority, "DROP TRIGGER " <> escapeS (snd trigName))]
 showAlterDb (AddTriggerOnDelete trigName tName body) = Right [(False, triggerPriority,
-  "CREATE TRIGGER " <> escape (snd trigName) <> " DELETE ON " <> escape (snd tName) <> " BEGIN " <> body <> "END")]
+  "CREATE TRIGGER " <> escapeS (snd trigName) <> " DELETE ON " <> escapeS (snd tName) <> " BEGIN " <> body <> "END")]
 showAlterDb (AddTriggerOnUpdate trigName tName fieldName body) = Right [(False, triggerPriority,
-  "CREATE TRIGGER " <> escape (snd trigName) <> " UPDATE OF " <> fieldName' <> " ON " <> escape (snd tName) <> " BEGIN " <> body <> "END")] where
-    fieldName' = maybe (error $ "showAlterDb: AddTriggerOnUpdate does not have fieldName for trigger " <> show trigName) escape fieldName
+  "CREATE TRIGGER " <> escapeS (snd trigName) <> " UPDATE OF " <> fieldName' <> " ON " <> escapeS (snd tName) <> " BEGIN " <> body <> "END")] where
+    fieldName' = maybe (error $ "showAlterDb: AddTriggerOnUpdate does not have fieldName for trigger " <> show trigName) escapeS fieldName
 showAlterDb alt = error $ "showAlterDb: does not support " ++ show alt
 
-showAlterTable :: T.Text -> AlterTable -> Maybe (Bool, Int, T.Text)
-showAlterTable table (AddColumn col) = Just (False, defaultPriority, T.concat
+showAlterTable :: Utf8 -> AlterTable -> Maybe (Bool, Int, Utf8)
+showAlterTable table (AddColumn col) = Just (False, defaultPriority, mconcat
   [ "ALTER TABLE "
-  , escape table
+  , escapeS table
   , " ADD COLUMN "
   , showColumn col
   ])
-showAlterTable table (AlterColumn col [UpdateValue s]) = Just (False, defaultPriority, T.concat
+showAlterTable table (AlterColumn col [UpdateValue s]) = Just (False, defaultPriority, mconcat
   [ "UPDATE "
-  , escape table
+  , escapeS table
   , " SET "
-  , escape (colName col)
+  , escapeS (colName col)
   , "="
   , s
   , " WHERE "
-  , escape (colName col)
+  , escapeS (colName col)
   , " IS NULL"
   ])
-showAlterTable table (AddUnique (UniqueDef uName UniqueIndex cols)) = Just (False, defaultPriority, T.concat
+showAlterTable table (AddUnique (UniqueDef uName UniqueIndex cols)) = Just (False, defaultPriority, mconcat
   [ "CREATE UNIQUE INDEX "
-  , maybe (error $ T.unpack $ "showAlterTable: index for table " <> table <> " does not have a name") escape uName
+  , maybe (error $ T.unpack $ "showAlterTable: index for table " <> (utf8ToText table) <> " does not have a name") escapeS uName
   , " ON "
-  , escape table
+  , escapeS (table)
   , "("
-  , T.intercalate "," $ map (either escape id) cols
+  , intercalateS "," $ map (either escapeS id) cols
   , ")"
   ])
-showAlterTable _ (DropIndex uName) = Just (False, defaultPriority, T.concat
+showAlterTable _ (DropIndex uName) = Just (False, defaultPriority, mconcat
   [ "DROP INDEX "
-  , escape uName
+  , escapeS (uName)
   ])
 showAlterTable _ _ = Nothing
 

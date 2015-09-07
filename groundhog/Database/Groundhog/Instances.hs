@@ -109,8 +109,7 @@ instance (PurePersistField a, PurePersistField b, PurePersistField c, PurePersis
     in ((a, b, c, d, e), rest4)
 
 instance PrimitivePersistField String where
-  toPrimitivePersistValue _ s = PersistString s
-  fromPrimitivePersistValue _ (PersistString s) = s
+  toPrimitivePersistValue _ s = PersistText (T.pack s)
   fromPrimitivePersistValue _ (PersistText s) = T.unpack s
   fromPrimitivePersistValue _ (PersistByteString bs) = T.unpack $ T.decodeUtf8With T.lenientDecode bs
   fromPrimitivePersistValue _ (PersistInt64 i) = show i
@@ -125,14 +124,12 @@ instance PrimitivePersistField String where
 
 instance PrimitivePersistField T.Text where
   toPrimitivePersistValue _ a = PersistText a
-  fromPrimitivePersistValue _ (PersistString a) = T.pack a
   fromPrimitivePersistValue _ (PersistText a) = a
   fromPrimitivePersistValue _ (PersistByteString bs) = T.decodeUtf8With T.lenientDecode bs
   fromPrimitivePersistValue p x = T.pack $ fromPrimitivePersistValue p x
 
 instance PrimitivePersistField ByteString where
   toPrimitivePersistValue _ s = PersistByteString s
-  fromPrimitivePersistValue _ (PersistString a) = T.encodeUtf8 $ T.pack a
   fromPrimitivePersistValue _ (PersistText a) = T.encodeUtf8 a
   fromPrimitivePersistValue _ (PersistByteString a) = a
   fromPrimitivePersistValue p x = T.encodeUtf8 . T.pack $ fromPrimitivePersistValue p x
@@ -273,7 +270,6 @@ class Reader
 
 readIntegral :: T.Reader a -> PersistValue -> String -> a
 readIntegral dec s errMessage = case s of
-  PersistString str -> readHelper' (T.pack str)
   PersistText str -> readHelper' str
   PersistByteString str -> readHelper' (T.decodeUtf8With T.lenientDecode str)
   _ -> error $ "readHelper: " ++ errMessage
@@ -285,7 +281,6 @@ readIntegral dec s errMessage = case s of
 
 readHelper :: (Read a) => PersistValue -> String -> a
 readHelper s errMessage = case s of
-  PersistString str -> readHelper' str
   PersistByteString str -> readHelper' (unpack str)
   _ -> error $ "readHelper: " ++ errMessage
   where
@@ -662,7 +657,6 @@ instance A.FromJSON PersistValue where
   parseJSON a = fail $ "parseJSON PersistValue: unexpected " ++ show a
 
 instance A.ToJSON PersistValue where
-  toJSON (PersistString t) = A.String $ T.pack t
   toJSON (PersistText t) = A.String $ t
   toJSON (PersistByteString b) = A.String $ T.decodeUtf8 $ B64.encode b
   toJSON (PersistInt64 i) = A.Number $ fromIntegral i

@@ -88,11 +88,11 @@ getQueries :: Bool -- ^ True - support unsafe queries
              -> SingleMigration -> Either [Text] [Text]
 getQueries _ (Left errs) = Left errs
 getQueries runUnsafe (Right migs) = (if runUnsafe || null unsafe
-  then Right $ map (\(_, _, query) -> query) migs'
+  then Right $ map (\(_, _, query) -> (utf8ToText query)) migs'
   else Left $
     [ "Database migration: manual intervention required."
     , "The following actions are considered unsafe:"
-    ] ++ map (\(_, _, query) -> query) unsafe) where
+    ] ++ map (\(_, _, query) -> (utf8ToText query)) unsafe) where
   migs' = sortBy (compare `on` \(_, i, _) -> i) migs
   unsafe = filter (\(isUnsafe, _, _) -> isUnsafe) migs'
 
@@ -124,7 +124,7 @@ printMigration migs = liftIO $ forM_ (Map.assocs migs) $ \(k, v) -> do
   case v of
     Left errors -> mapM_ (T.putStrLn . ("\tError:\t" <>)) errors
     Right sqls  -> do
-      let showSql (isUnsafe, _, sql) = (if isUnsafe then "Unsafe:\t" else "Safe:\t") <> sql
+      let showSql (isUnsafe, _, sql) = (if isUnsafe then "Unsafe:\t" else "Safe:\t") <> (utf8ToText sql)
       mapM_ (T.putStrLn . ("\t" <>) . showSql) sqls
 
 -- | Creates migrations and executes them with printing to stderr. Fails when an unsafe migration occurs.
@@ -188,7 +188,7 @@ data PSFieldDef str = PSFieldDef {
 
 applyDbTypeSettings :: PSFieldDef Text -> DbType -> DbType
 applyDbTypeSettings (PSFieldDef _ _ dbTypeName _ Nothing def psRef) typ = case typ of
-  DbTypePrimitive t nullable def' ref -> DbTypePrimitive (maybe t (\typeName -> DbOther $ OtherTypeDef [Left typeName]) dbTypeName) nullable (def <|> def') (applyReferencesSettings psRef ref)
+  DbTypePrimitive t nullable def' ref -> DbTypePrimitive (maybe t (\typeName -> DbOther $ OtherTypeDef [Left typeName]) (fmap textToUtf8 dbTypeName)) nullable (def <|> def') (applyReferencesSettings psRef ref)
   DbEmbedded emb ref -> DbEmbedded emb (applyReferencesSettings psRef ref)
   t -> t
 applyDbTypeSettings (PSFieldDef _ _ _ _ (Just subs) _ psRef) typ = (case typ of
