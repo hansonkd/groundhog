@@ -300,7 +300,7 @@ showSqlType t = case t of
   DbDayTime -> "TIMESTAMP"
   DbDayTimeZoned -> "TIMESTAMP WITH TIME ZONE"
   DbBlob -> "BLOB"
-  DbOther (OtherTypeDef ts) -> foldMap (either id showSqlType) ts
+  DbOther (OtherTypeDef ts) -> foldMap (either id (showSqlType . textToUtf8)) ts
 
 readSqlType :: T.Text -> DbTypePrimitive
 readSqlType typ = case (T.toUpper typ) of
@@ -314,7 +314,7 @@ readSqlType typ = case (T.toUpper typ) of
   "TIMESTAMP" -> DbDayTime
   "TIMESTAMP WITH TIME ZONE" -> DbDayTimeZoned
   "BLOB" -> DbBlob
-  _ -> DbOther $ OtherTypeDef [Left (textToUtf8 typ)]
+  _ -> DbOther $ OtherTypeDef [Left (typ)]
 
 data Affinity = TEXT | NUMERIC | INTEGER | REAL | NONE deriving (Eq, Show)
 

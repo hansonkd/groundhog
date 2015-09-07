@@ -524,7 +524,7 @@ type ParentTableReference = (Either (EntityDef, Maybe Text) ((Maybe Text, Text),
 -- | Stores a database type. The list contains two kinds of tokens for the type Text. Backend will choose a Text representation for DbTypePrimitive's, and the Text literals will go to the type as-is. As the final step, these tokens are concatenated. For example, @[Left \"varchar(50)\"]@ will become a Text with max length and @[Right DbInt64, Left \"[]\"]@ will become integer[] in PostgreSQL.
 newtype OtherTypeDef' str = OtherTypeDef ([Either str (DbTypePrimitive' str)]) deriving (Eq, Show)
 
-type OtherTypeDef = OtherTypeDef' Utf8
+type OtherTypeDef = OtherTypeDef' Text
 
 -- | The first argument is a flag which defines if the field names should be concatenated with the outer field name (False) or used as is which provides full control over table column names (True).
 -- Value False should be the default value so that a datatype can be embedded without name conflict concern. The second argument list of field names and field types.
