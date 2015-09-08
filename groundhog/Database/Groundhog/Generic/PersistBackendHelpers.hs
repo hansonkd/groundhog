@@ -103,9 +103,9 @@ selectStream conf@RenderConfig{..} queryFunc preColumns noLimit options f = doSe
 selectAll :: forall m v . (PersistBackend m, PersistEntity v)
           => RenderConfig -> (forall a . Utf8 -> [PersistValue] -> (RowPopper m -> m a) -> m a) -> m [(AutoKey v, v)]
 selectAll conf queryFunc = result where
-  result = liftM (foldr ($) []) $ selectAllStream conf queryFunc popperToDiffList
+  result = liftM (\a -> a `seq` foldr ($) [] a) $ selectAllStream conf queryFunc popperToDiffList
   popperToDiffList pop = go where
-    go = pop >>= maybe (return id) (\a -> liftM ((a:) .) go)
+    go = pop >>= maybe (return id) (\a -> a `seq` liftM ((a:) .) go)
 
 -- | It may call the passed function multiple times
 selectAllStream :: forall m v result . (PersistBackend m, PersistEntity v)
@@ -120,7 +120,7 @@ selectAllStream RenderConfig{..} queryFunc f = start where
   mkEntity cNum = mapPopper $ \xs -> do
     let (k, xs') = fromPurePersistValues proxy xs
     (v, _) <- fromEntityPersistValues (toPrimitivePersistValue proxy (cNum :: Int):xs')
-    return (k, v)
+    k `seq` v `seq` return (k, v)
 
 getBy :: forall m v u . (PersistBackend m, PersistEntity v, IsUniqueKey (Key v (Unique u)))
       => RenderConfig

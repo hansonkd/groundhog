@@ -10,7 +10,7 @@ import Database.Groundhog.TH (groundhog)
 import Control.Monad.Logger (MonadLogger(..), NoLoggingT, runNoLoggingT)
 import Control.Monad.Trans.Control (MonadBaseControl)
 import Control.Monad.Trans.Resource (ResourceT, runResourceT)
-import Database.Persist.TH (persistUpperCase)
+-- import Database.Persist.TH (persistUpperCase)
 
 --import Database.Esqueleto as E
 
@@ -22,6 +22,7 @@ import Control.Monad
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.Monad.Trans.Reader (runReaderT)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Pool (withResource)
 import Data.Maybe (fromJust)
 
@@ -36,7 +37,7 @@ myConfig = defaultConfig {
 
 gPerson = GPerson "John Doe" 23 180 180 180 180 180 180 180
 gCond :: G.DbDescriptor db => G.Cond db (G.RestrictionHolder GPerson GPersonConstructor)
-gCond = NameField G.==. ("abc" :: Text) G.&&. AgeField G.==. (40 :: Int) G.&&. HeightField G.==. (160 :: Int)
+gCond = NameField G.==. (T.replicate 1000 "a" :: Text) G.&&. AgeField G.==. (40 :: Int) G.&&. HeightField G.==. (160 :: Int)
 
 gMigrate :: (G.PersistBackend (G.DbPersist conn m), MonadIO m) => G.DbPersist conn m () -> G.DbPersist conn m (G.Key GPerson G.BackendSpecific)
 gMigrate truncate = G.runMigration migrateG >> truncate >> G.insert gPerson
@@ -71,12 +72,12 @@ main =
             then (\gm -> G.runDbConn (replicateM_ numberOfOperations gm) gConn)
             else (\gm -> G.runDbConnNoTransaction (replicateM_ numberOfOperations gm) gConn)
     defaultMainWith myConfig
-      [ bgroup "get" $ mkBench (foldM (\_ acc ->  do { p <- G.get gKey; return $ acc + (height $ fromJust p)}) 0 [1..100] )
+      [ bgroup "get" $ mkBench (foldM (\acc _ ->  do { p <- G.get gKey; return $ acc `seq` acc + (T.length $ name $ fromJust p)}) 0 [1..100] )
 --      , bgroup "get" [bench "esqueleto" $ whnfIO $  runPers (E.select $ E.from $ \p -> E.where_ (p ^. PPersonId ==. val pKey) >> return p)]
       , bgroup "replace" $ mkBench (G.replace gKey gPerson)
       , bgroup "select" $ mkBench (G.project (G.AutoKeyField, GPersonConstructor) gCond)
-      , bgroup "updateByKey" $ mkBench (G.update [NameField G.=. ("abc" :: Text)] $ G.AutoKeyField G.==. gKey)
-      , bgroup "updateWhere" $ mkBench (G.update [NameField G.=. ("abc" :: Text)] gCond)
+      , bgroup "updateByKey" $ mkBench (G.update [NameField G.=. (T.replicate 1000 "a" :: Text)] $ G.AutoKeyField G.==. gKey)
+      , bgroup "updateWhere" $ mkBench (G.update [NameField G.=. (T.replicate 1000 "a" :: Text)] gCond)
       , bgroup "count" $ mkBench (G.count gCond)
       , bgroup "deleteBy" $ mkBench (G.deleteBy gKey)
       , bgroup "deleteWhere" $ mkBench (G.delete gCond)

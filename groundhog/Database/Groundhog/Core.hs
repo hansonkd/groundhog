@@ -269,7 +269,7 @@ newtype DbPersist conn m a = DbPersist { unDbPersist :: ReaderT conn m a }
   deriving (Monad, MonadIO, Functor, Applicative, MonadTrans, MonadReader conn)
 
 instance MonadBase IO m => MonadBase IO (DbPersist conn m) where
-  liftBase = lift . liftBase
+  liftBase = DbPersist . liftBase
 
 instance MonadTransControl (DbPersist conn) where
 #if MIN_VERSION_monad_control(1, 0, 0)
